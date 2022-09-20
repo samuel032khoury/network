@@ -1,0 +1,188 @@
+#!/usr/bin/python3
+import socket
+import sys, os
+
+BUFEER_SIZE = 1024
+COMMANDS = dict(
+    {
+    "ls" : "LIST {0}\r\n",
+    "mkdir" : "MKD {0}\r\n",
+    "rm" : "DELE {0}\r\n",
+    "rmdir" : "RMD {0}\r\n",
+    "cp" : {"dn":"RETR {0}\r\n","up":"STOR {0}\r\n"},
+    "mv" : {"dn":"RETR {0}\r\n","up":"STOR {0}\r\n"}
+    })
+FILE_MODE = False
+DOWLOADING = False
+
+def parseArg():
+    # Exception Handlling
+    if len(sys.argv) < 3: # program needs no less than 2 positional arguments
+        raise AssertionError("Insufficient arguments!")
+    if len(sys.argv) > 4: # program needs no more than 3 positional arguments
+        raise AssertionError("The program recives at most 3 arguments!")
+    command = sys.argv[1]
+    if command not in COMMANDS.keys(): # check if the command is valid
+        raise AssertionError("Invalid operation name!")
+    global FILE_MODE
+    FILE_MODE = (command == "cp" or command == "mv")
+
+    # if the program is running in the file transferring mode, it needs 3 positional arguments
+    if FILE_MODE and len(sys.argv) != 4:
+        raise AssertionError("Insufficient arguments!")
+
+    # if the program is running in the control mode, it needs 2 positional arguments
+    # NOTE: ls is an exception, although it envolves data transferring somehow, there isn't a FILE
+    # involved, and since it only needs one more positional argument, we treat it as a (exceptional) 
+    # control command for simlicity
+    if not FILE_MODE and len(sys.argv) != 3:
+        raise AssertionError("The program recives at most 2 arguments in control mode!")
+
+    target = sys.argv[-1]
+    source = sys.argv[-2] if FILE_MODE else None
+
+    global DOWLOADING
+    if target.startswith("ftp://") and (not source or not source.startswith("ftp://")):
+        DOWLOADING = False
+    elif not target.startswith("ftp://") and (source and source.startswith("ftp://")):
+        DOWLOADING = True
+    else:
+        if FILE_MODE:
+            raise AssertionError(
+                "The file transferring operation needs one remote URL and one local path!")
+        else:
+            raise AssertionError("The control operation needs a remote URL!")
+    url = target if target.startswith("ftp://") else source
+    local = source if url==target else target
+
+    return (command, url, local)
+
+def parseUrl(url):
+    url = url[6:]
+    atSpl = url.split('@')
+    atSpl = [''] + atSpl if len(atSpl) == 1 else atSpl
+    login, remotePath = atSpl
+
+    login = login.split(':')
+    user = 'anonymous' if len(login) < 2 else login[0]
+    cred = '' if len(login) < 2 else login[1]
+    
+    remotePath = remotePath.split('/')
+    connInfo = remotePath[0].split(':')
+    server = connInfo[0]
+    port = 21 if len(connInfo) < 2 else int(connInfo[1])
+    path = '/' + '/'.join(remotePath[1:])
+    return (user, cred, server, port, path)
+
+def connLogin(user, cred, server, port):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # Connect to the server
+    print ("Sending server request...")
+    try:
+        sock.connect((server, port))
+        resp = sock.recv(BUFEER_SIZE).decode().strip()
+        print (resp)
+    except:
+        print ("Connection unsucessful. Make sure the server is online.")
+        exit()
+
+    # Login
+    sock.send("USER {}\r\n".format(user).encode())
+    resp = sock.recv(BUFEER_SIZE)
+    sock.send("PASS {}\r\n".format(cred).encode())
+    resp = sock.recv(BUFEER_SIZE).decode().strip()
+    print(resp)
+    if resp.startswith('530'):
+        quit()
+    return sock
+
+def sendControlMessage(sock, command, path):
+    msg = COMMANDS[command].format(path)
+    sock.send(msg.encode())
+    resp = sock.recv(BUFEER_SIZE).decode().strip()
+    print(resp)
+
+def openDataSock(sock):
+    sock.send("PASV\r\n".encode())
+    resp = sock.recv(BUFEER_SIZE).decode().strip()
+    if not resp.startswith('227'):
+        raise AttributeError("Fail to get data channel info!")
+    dataConn = resp[resp.index('(') + 1: resp.index(')')].split(',')
+    dataServer = '.'.join(dataConn[:4])
+    dataPort = (int(dataConn[4]) << 8) + int(dataConn[5])
+    dataSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    dataSock.connect((dataServer,dataPort))
+    sock.send('TYPE I\r\n'.encode())
+    resp = sock.recv(BUFEER_SIZE).decode().strip()
+    sock.send('MODE S\r\n'.encode())
+    resp = sock.recv(BUFEER_SIZE).decode().strip()
+    sock.send('STRU F\r\n'.encode())
+    resp = sock.recv(BUFEER_SIZE).decode().strip()
+
+    return dataSock
+
+def listingDir(sock, path):
+    dataSock = openDataSock(sock)
+    sock.send(COMMANDS['ls'].format(path).encode())
+    resp = sock.recv(BUFEER_SIZE).decode().strip()
+    print(resp)
+    listing = ""
+    while True:
+        data = dataSock.recv(BUFEER_SIZE).decode()
+        if not data:
+            dataSock.close()
+            break
+        else:
+            listing += resp
+    print(listing.strip())
+    resp = sock.recv(BUFEER_SIZE).decode().strip()
+    print(resp)
+
+def transFile(sock, command, remote, local):
+    dataSock = openDataSock(sock)
+    sock.send(COMMANDS[command]["dn" if DOWLOADING else "up"].format(remote).encode())
+    resp = sock.recv(BUFEER_SIZE).decode().strip()
+    print(resp)
+
+    if DOWLOADING:
+        des = open(local, 'wb')
+        while True:
+            data = dataSock.recv(BUFEER_SIZE)
+            if not data:
+                break
+            des.write(data)
+    else:
+        src = open(local, 'rb')
+        while True:
+            data = src.read(BUFEER_SIZE)
+            if not data:
+                break
+            dataSock.send(data)
+
+    if command=='mv':
+        if DOWLOADING:
+            sendControlMessage(sock, 'rm', remote)
+        else:
+            os.remove(local)
+    
+    dataSock.close()
+    resp = sock.recv(BUFEER_SIZE).decode().strip()
+    print(resp)
+
+def main():
+    command, url, local = parseArg()
+    user, cred, server, port, path = parseUrl(url)
+    sock = connLogin(user, cred, server, port)
+
+    if FILE_MODE:
+        transFile(sock, command, path, local)
+    elif command == "ls":
+        listingDir(sock, path)
+    else:
+        sendControlMessage(sock, command, path)
+    sock.send("QUIT \r\n".encode())
+    resp = sock.recv(BUFEER_SIZE).decode().strip()
+    print(resp)
+
+if __name__ == '__main__':
+    main()

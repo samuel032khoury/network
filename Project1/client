@@ -1,0 +1,138 @@
+#!/usr/bin/python3
+import json, socket, sys, ssl, urllib.request
+import itertools
+import argparse
+
+# Validate the json from the server
+def parseJson(reply):
+        obj = None
+        try:
+            obj = json.loads(reply)
+            if (obj["type"] != 'start' and obj["type"] != 'retry' and obj["type"] != 'bye'):
+                raise AttributeError()
+        except:
+            raise AssertionError("Invalid JSON reply")
+        return obj
+
+
+if __name__ == '__main__':
+    # argument parsing
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-p', "--port", type = int, required = False)
+    parser.add_argument('-s',"--secure", action="store_true", required = False)
+    parser.add_argument('hostname')
+    parser.add_argument('username')
+    args = parser.parse_args()
+
+    # socket config
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # change to ssl if specifed
+    sock = ssl.wrap_socket(sock) if args.secure else sock
+    server = args.hostname
+    user = args.username
+    # defult port to 27993 (if not ssl) or 27994 (if ssl), if not other specifed
+    port = (args.port) if args.port else (27994 if args.secure else 27993)
+    
+    # sock connect
+    sock.connect((server, port))
+
+    # compose and send hello message
+    message = """{{"type": "hello", "northeastern_username": "{0}"}}\n""".format(user).encode()
+    sock.send(message)
+
+    # recieve start message
+    reply = sock.recv(1280).decode()
+    start = parseJson(reply)
+    # id for the current game
+    sock_id = start["id"]
+
+    # guess strategy
+    alphaBet = set() # stores the alphabet for the word
+    
+    # 16 words that covers all the letters 2x
+    filterWords = ['abide', 'chomp', 'gruft', 'xylan', 'jakos', 'vizor', "imcnt", 'quawk',
+     "edify", "grosz", "samaj", "kotow", "delhi", "qubba", "expdt", "navvy"]
+
+    # represents characters that do NOT at a position
+    nullPlace = [set() for i in range(5)];
+    # possible words (/character combinations)
+    targetWords = []
+    # represents secured character at a position
+    final = ['', '', '', '', '']
+
+    # interact with the server to guess all the words in a guess list
+    def testWords(words):
+        for word in words:
+            message = '''{{"type": "guess", "id": "{0}", "word": "{1}"}}\n'''.format(
+                sock_id, "".join(word)).encode()
+            sock.send(message)
+            reply = sock.recv(1280).decode()
+            replyJson = parseJson(reply)
+            # if we failed, we collect information from this round and update our knowledge
+            if (replyJson["type"] == "retry"):
+                # retrive the latest word of the guess from the server
+                latest_guess = replyJson['guesses'][-1]['word']
+                # retrive the latest mark of the guess from the server
+                latest_marks = replyJson['guesses'][-1]['marks']
+                # we care about the position of the char, the char itself, and the mark of the char
+                for ind, (char,mark) in enumerate(zip(latest_guess, latest_marks)):
+                    if (mark == 0):
+                        # if the mark of the char is 0, we ignore it
+                        pass
+                    if (mark == 1):
+                        # if the mark of the char is 1, we include the char in our alphabet, but as 
+                        # it is at the wrong place, we also add this char to the correspongding set
+                        # of nullPlace, to indicate we want to avoid this char being placed at here
+                        alphaBet.add(char)
+                        nullPlace[ind].add(char)
+                    if (mark == 2):
+                        # if the mark of the char is 2, we also include the char in our alphabet,
+                        # but as it is at the correct place, we can safely put a secured letter in
+                        # final at the corresponding position
+                        alphaBet.add(char)
+                        final[ind] = char
+            # if we succeed, we grab the value of the flag and exit the program
+            elif(replyJson["type"] == "bye"):
+                flag = replyJson['flag']
+                # print out the secret flag
+                print(flag)
+                # disconnect the socket
+                sock.close()
+                exit()
+    # guess all the words in the filter word list
+    testWords(filterWords)
+
+    # if all characters are secured, we are certain about the word and send the guess to the server
+    if (not '' in final):
+        # note this would imply exit() on line 98
+        testWords([final])
+    
+    # By the alphabet and the nullplace, we can get possible chars for each position of the word
+    possibleChars = [list((filter(lambda char: not char in nullPlace[currInd], alphaBet))) 
+    for currInd, char in enumerate(nullPlace)]
+    # Omit the position of the word that we are certain about what letter to put
+    possibleSlots = [chars for currInd, chars in enumerate(possibleChars) if final[currInd] == '']
+    # generates all possible combinations of the letters of interest
+    possibleCombs = list(itertools.product(*possibleSlots))
+
+    # reads the word list from the server
+    doc = ''
+    for line in urllib.request.urlopen("https://3700.network/projects/project1-words.txt"):
+        doc += line.decode()
+    wordList = doc.splitlines()
+
+    # for every possible combinations...
+    for currComb in possibleCombs:
+        # generates a copy of the final guess
+        currTarget = final[:]
+        for currChar in currComb:
+            # place the current combination of letters in the "blank" of the final guess
+            currTarget[currTarget.index('')] = currChar
+        currWord = ''.join(currTarget)
+        if currWord in wordList:
+            # we only test valid words (words that is in the word list)
+            targetWords.append(currWord)
+
+    # guess all the words in the refined word list-this is certainly going to hit the correct answer
+    testWords(targetWords)
+
