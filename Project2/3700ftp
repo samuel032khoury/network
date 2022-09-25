@@ -3,6 +3,7 @@ import socket
 import sys, os
 
 BUFEER_SIZE = 1024
+# message template for all supported FTP commands
 COMMANDS = dict(
     {
     "ls" : "LIST {0}\r\n",
@@ -15,65 +16,81 @@ COMMANDS = dict(
 FILE_MODE = False
 DOWLOADING = False
 
+# parse all the positional arguments from the command line
+# • positional argument includes the ftp command, one url, and one local path if the ftp command is 
+#   file-transmission related (cp / mv). The function also infers the transmission direction 
+#   (downloading / uploading) if the command is  file-transmission related.
 def parseArg():
-    # Exception Handlling
-    if len(sys.argv) < 3: # program needs no less than 2 positional arguments
-        raise AssertionError("Insufficient arguments!")
-    if len(sys.argv) > 4: # program needs no more than 3 positional arguments
-        raise AssertionError("The program recives at most 3 arguments!")
+    # Assertions
+    # program needs no less than 2 positional arguments
+    assert len(sys.argv) > 2, "Insufficient arguments!"
+    # program needs no more than 3 positional arguments
+    assert (not len(sys.argv) > 4), "The program receives at most 3 arguments!"
     command = sys.argv[1]
-    if command not in COMMANDS.keys(): # check if the command is valid
-        raise AssertionError("Invalid operation name!")
+    # check if the command is valid
+    assert command in COMMANDS.keys(), "Invalid operation name!"
+
     global FILE_MODE
     FILE_MODE = (command == "cp" or command == "mv")
 
-    # if the program is running in the file transferring mode, it needs 3 positional arguments
-    if FILE_MODE and len(sys.argv) != 4:
-        raise AssertionError("Insufficient arguments!")
+    if FILE_MODE:
+        # if the program is running on the file transmitting mode, it needs 3 positional arguments
+        assert len(sys.argv) == 4, "Insufficient arguments!"
 
-    # if the program is running in the control mode, it needs 2 positional arguments
-    # NOTE: ls is an exception, although it envolves data transferring somehow, there isn't a FILE
-    # involved, and since it only needs one more positional argument, we treat it as a (exceptional) 
-    # control command for simlicity
-    if not FILE_MODE and len(sys.argv) != 3:
-        raise AssertionError("The program recives at most 2 arguments in control mode!")
+    else:
+        # if the program is running in the control mode, it needs 2 positional arguments
+        # • NOTE: ls is an exception, although it involves data transmission somehow, there isn't a
+        #   FILE involved, and since it only needs one more positional argument, we treat it as 
+        #   a (exceptional) control command for simplicity
+        assert len(sys.argv) == 3, "The program receives at most 2 arguments in control mode!"
 
-    target = sys.argv[-1]
     source = sys.argv[-2] if FILE_MODE else None
+    target = sys.argv[-1]
 
     global DOWLOADING
-    if target.startswith("ftp://") and (not source or not source.startswith("ftp://")):
+    if target.startswith("ftp://") and ((not source) or (not source.startswith("ftp://"))):
+        # if target is the only one that starts with 'ftp://', then the program will runs in 
+        # uploading mode (or we don't care if source is None)
         DOWLOADING = False
-    elif not target.startswith("ftp://") and (source and source.startswith("ftp://")):
+    elif not target.startswith("ftp://") and (source and (source.startswith("ftp://"))):
+        # if source is not None and it is the only one that starts with 'ftp://', then the program
+        # will runs in downloading mode
         DOWLOADING = True
     else:
+        # else there must be something wrong with the input, we assert that
         if FILE_MODE:
             raise AssertionError(
-                "The file transferring operation needs one remote URL and one local path!")
+                "The file transmitting operation needs one remote URL and one local path!")
         else:
             raise AssertionError("The control operation needs a remote URL!")
+
     url = target if target.startswith("ftp://") else source
     local = source if url==target else target
 
     return (command, url, local)
 
+# parse the (remote) url the user inputs, to get the username, credential, server, port and the 
+# remote path
 def parseUrl(url):
     url = url[6:]
     atSpl = url.split('@')
     atSpl = [''] + atSpl if len(atSpl) == 1 else atSpl
-    login, remotePath = atSpl
+    login, addr = atSpl
 
     login = login.split(':')
-    user = 'anonymous' if len(login) < 2 else login[0]
+    user = 'anonymous' if len(login) < 1 else login[0]
     cred = '' if len(login) < 2 else login[1]
     
-    remotePath = remotePath.split('/')
-    connInfo = remotePath[0].split(':')
+    addr = addr.split('/')
+    connInfo = addr[0].split(':')
     server = connInfo[0]
     port = 21 if len(connInfo) < 2 else int(connInfo[1])
-    path = '/' + '/'.join(remotePath[1:])
+    path = '/' + '/'.join(addr[1:])
     return (user, cred, server, port, path)
 
+# connect to the server and login with the given username and the credential, return the socket used
+# to build the connection. If the connection is unsucessful, prompt the error message and quit the
+# program
 def connLogin(user, cred, server, port):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     # Connect to the server
@@ -83,7 +100,7 @@ def connLogin(user, cred, server, port):
         resp = sock.recv(BUFEER_SIZE).decode().strip()
         print (resp)
     except:
-        print ("Connection unsucessful. Make sure the server is online.")
+        print ("Connection unsuccessful. Make sure the server is online.")
         exit()
 
     # Login
@@ -92,26 +109,38 @@ def connLogin(user, cred, server, port):
     sock.send("PASS {}\r\n".format(cred).encode())
     resp = sock.recv(BUFEER_SIZE).decode().strip()
     print(resp)
+
+    # if respond a login failure, quit the program immediately
     if resp.startswith('530'):
         quit()
+    # if respond a successful login, return the logged in socket
     return sock
 
+# send a control command to the connected sock to conduct a ftp request
 def sendControlMessage(sock, command, path):
     msg = COMMANDS[command].format(path)
     sock.send(msg.encode())
     resp = sock.recv(BUFEER_SIZE).decode().strip()
     print(resp)
 
+# open (and configure) a socket for transmitting data, return the created data socket
 def openDataSock(sock):
+    # Request to enter the passive mode
     sock.send("PASV\r\n".encode())
     resp = sock.recv(BUFEER_SIZE).decode().strip()
     if not resp.startswith('227'):
-        raise AttributeError("Fail to get data channel info!")
+        print(resp)
+        quit()
+
+    # parse the ip and the port
     dataConn = resp[resp.index('(') + 1: resp.index(')')].split(',')
     dataServer = '.'.join(dataConn[:4])
     dataPort = (int(dataConn[4]) << 8) + int(dataConn[5])
+    #connect with the target server + port
     dataSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     dataSock.connect((dataServer,dataPort))
+
+    # Configure the control sock to enter file-oriented mode
     sock.send('TYPE I\r\n'.encode())
     resp = sock.recv(BUFEER_SIZE).decode().strip()
     sock.send('MODE S\r\n'.encode())
@@ -121,7 +150,9 @@ def openDataSock(sock):
 
     return dataSock
 
+# request the directory listing of <path> from the connected socket
 def listingDir(sock, path):
+    # open a data socket for receiving data
     dataSock = openDataSock(sock)
     sock.send(COMMANDS['ls'].format(path).encode())
     resp = sock.recv(BUFEER_SIZE).decode().strip()
@@ -129,22 +160,29 @@ def listingDir(sock, path):
     listing = ""
     while True:
         data = dataSock.recv(BUFEER_SIZE).decode()
-        if not data:
+        if not data: # if no more data, close the data socket
             dataSock.close()
             break
-        else:
-            listing += resp
+        else: # else keep concatenate the received data
+            listing += data
     print(listing.strip())
     resp = sock.recv(BUFEER_SIZE).decode().strip()
     print(resp)
 
+# transmit a file between the remote server and the local machine
 def transFile(sock, command, remote, local):
+    # open a data socket for receiving data
     dataSock = openDataSock(sock)
+    # send differing command according to the transmission direction
     sock.send(COMMANDS[command]["dn" if DOWLOADING else "up"].format(remote).encode())
     resp = sock.recv(BUFEER_SIZE).decode().strip()
     print(resp)
+    if not resp.startswith('150'):
+        exit()
 
     if DOWLOADING:
+        # if downloading, create a local writtable file and copy the recieved data until the remote 
+        # file exhausts
         des = open(local, 'wb')
         while True:
             data = dataSock.recv(BUFEER_SIZE)
@@ -152,6 +190,8 @@ def transFile(sock, command, remote, local):
                 break
             des.write(data)
     else:
+        # if not downloading (i.e. uploading), open the specified local file and send its data to
+        # the remote server until the local file exhausts
         src = open(local, 'rb')
         while True:
             data = src.read(BUFEER_SIZE)
@@ -159,6 +199,7 @@ def transFile(sock, command, remote, local):
                 break
             dataSock.send(data)
 
+    # compound a rm command if mv
     if command=='mv':
         if DOWLOADING:
             sendControlMessage(sock, 'rm', remote)
@@ -180,9 +221,12 @@ def main():
         listingDir(sock, path)
     else:
         sendControlMessage(sock, command, path)
+
+    # close the connection
     sock.send("QUIT \r\n".encode())
     resp = sock.recv(BUFEER_SIZE).decode().strip()
     print(resp)
+    return 0
 
 if __name__ == '__main__':
     main()
