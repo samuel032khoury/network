@@ -14,6 +14,8 @@ import struct
 from functools import reduce
 from collections import defaultdict
 
+os.system("cp 3700router.py 3700router")
+
 def die(msg):
   raise ValueError("Error: %s" % msg)
 
