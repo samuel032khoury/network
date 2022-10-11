@@ -19,9 +19,9 @@ class Router:
             self.sockets[neighbor].bind(('localhost', 0))
             self.ports[neighbor] = int(port)
             self.relations[neighbor] = relation
-            self.send(neighbor, json.dumps({ "type": "handshake", "src": self.our_addr(neighbor), "dst": neighbor, "msg": {}  }))
+            self.send(neighbor, json.dumps({ "type": "handshake", "src": self.routerOf(neighbor), "dst": neighbor, "msg": {}  }))
 
-    def our_addr(self, dst):
+    def routerOf(self, dst):
         quads = list(int(qdn) for qdn in dst.split('.'))
         quads[3] = 1
         return "%d.%d.%d.%d" % (quads[0], quads[1], quads[2], quads[3])
@@ -35,8 +35,6 @@ class Router:
         # put the update msg (as JSON) on the routing table
         self.routingTable[src] = packet['msg']
 
-
-
     def announce(self, src, packet):
         # compose a forwarding update message
         def composeForwardingMessage(dst):
@@ -46,7 +44,7 @@ class Router:
             outUpdate.pop('origin', None)
             outUpdate.pop('selfOrigin', None)
             outPacket = {
-                'src': self.our_addr(dst),
+                'src': self.routerOf(dst),
                 'dst': dst,
                 'type': "update",
                 'msg': outUpdate
@@ -73,9 +71,9 @@ class Router:
                 mask = int(mask)
                 expect = int(expect)
                 actual = int(actual)
-                if mask==1 and (expect == actual):
+                if bool(mask) and (expect == actual):
                     matchingLength += 1
-                elif mask==1 and (expect != actual):
+                elif bool(mask) and (expect != actual):
                     # Abort
                     break
                 else:
@@ -84,14 +82,11 @@ class Router:
                     break
         return matchedList
 
-    
-
-
     def forwardData(self, src, packet):
         # NOTE: This might not work as expected
         def composeNoRouteMessage():
             noRoutepacket = {
-                'src' : self.our_addr(src),
+                'src' : self.routerOf(src),
                 'dst' : packet['src'],
                 'type': "no route",
                 "msg" : {}
@@ -121,7 +116,7 @@ class Router:
             "ASPath":neighbor[1]["ASPath"],
             },self.routingTable.items()))
         table = {
-            "src": self.our_addr(src),
+            "src": self.routerOf(src),
             "dst": src,
             "type": "table",
             "msg": data
