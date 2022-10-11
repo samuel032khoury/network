@@ -52,6 +52,7 @@ class Router:
                 'msg': outUpdate
             }
             return json.dumps(outPacket)
+        # NOTE: Currently assume all neighbors are customers
         # announce the updates to other networks
         for host in self.sockets.keys():
             if host != src:
