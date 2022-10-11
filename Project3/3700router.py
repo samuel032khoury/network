@@ -40,18 +40,18 @@ class Router:
     def announce(self, src, packet):
         # compose a forwarding update message
         def composeForwardingMessage(ip):
-            incomingUpdate = copy.deepcopy(packet['msg'])
-            incomingUpdate['ASPath'].insert(0, self.asn)
-            incomingUpdate.pop('localpref')
-            incomingUpdate.pop('origin')
-            incomingUpdate.pop('selfOrigin')
-            outcomingUpdate = {
+            outUpdate = copy.deepcopy(packet['msg'])
+            outUpdate['ASPath'].insert(0, self.asn)
+            outUpdate.pop('localpref')
+            outUpdate.pop('origin')
+            outUpdate.pop('selfOrigin')
+            outPacket = {
                 'src': self.our_addr(ip),
                 'dst': ip,
                 'type': "update",
-                'msg': incomingUpdate
+                'msg': outUpdate
             }
-            return json.dumps(outcomingUpdate)
+            return json.dumps(outPacket)
         # announce the updates to other networks
         for host in self.sockets.keys():
             if host != src:
