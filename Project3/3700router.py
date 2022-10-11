@@ -39,15 +39,15 @@ class Router:
 
     def announce(self, src, packet):
         # compose a forwarding update message
-        def composeForwardingMessage(ip):
+        def composeForwardingMessage(dst):
             outUpdate = copy.deepcopy(packet['msg'])
             outUpdate['ASPath'].insert(0, self.asn)
             outUpdate.pop('localpref')
             outUpdate.pop('origin')
             outUpdate.pop('selfOrigin')
             outPacket = {
-                'src': self.our_addr(ip),
-                'dst': ip,
+                'src': self.our_addr(dst),
+                'dst': dst,
                 'type': "update",
                 'msg': outUpdate
             }
