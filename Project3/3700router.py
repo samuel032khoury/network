@@ -32,7 +32,7 @@ class Router:
     def update(self, src, packet):
         # log the update
         self.updateLog.append(packet)
-        # put update msg (JSON) on the routing table
+        # put the update msg (as JSON) on the routing table
         self.routingTable[src] = packet['msg']
 
 
@@ -42,9 +42,9 @@ class Router:
         def composeForwardingMessage(dst):
             outUpdate = copy.deepcopy(packet['msg'])
             outUpdate['ASPath'].insert(0, self.asn)
-            outUpdate.pop('localpref')
-            outUpdate.pop('origin')
-            outUpdate.pop('selfOrigin')
+            outUpdate.pop('localpref', None)
+            outUpdate.pop('origin', None)
+            outUpdate.pop('selfOrigin', None)
             outPacket = {
                 'src': self.our_addr(dst),
                 'dst': dst,
@@ -52,12 +52,82 @@ class Router:
                 'msg': outUpdate
             }
             return json.dumps(outPacket)
+        
         # NOTE: Currently assume all neighbors are customers
         # announce the updates to other networks
         for host in self.sockets.keys():
             if host != src:
                 msg = composeForwardingMessage(host)
                 self.send(host, msg)
+
+    def matchPrefix(self, dst):
+        def ipToBin(ipAddr:str) -> str:
+            return ''.join(list(map(lambda quad: format(int(quad), '08b'),ipAddr.split('.'))))
+        matchedList = []
+        for neighbor, info in self.routingTable.items():
+            dstBin = ipToBin(dst)
+            networkBin = ipToBin(info['network'])
+            netmaskBin = ipToBin(info['netmask'])
+            matchingLength = 0
+            for mask, expect, actual in zip(netmaskBin, networkBin, dstBin):
+                mask = int(mask)
+                expect = int(expect)
+                actual = int(actual)
+                if mask==1 and (expect == actual):
+                    matchingLength += 1
+                elif mask==1 and (expect != actual):
+                    # Abort
+                    break
+                else:
+                    matchedList.append((matchingLength, neighbor))
+                    # Teminate
+                    break
+        return matchedList
+
+    
+
+
+    def forwardData(self, src, packet):
+        # NOTE: This might not work as expected
+        def composeNoRouteMessage():
+            noRoutepacket = {
+                'src' : self.our_addr(src),
+                'dst' : packet['src'],
+                'type': "no route",
+                "msg" : {}
+            }
+            return json.dumps(noRoutepacket)
+            
+
+        dst = packet['dst']
+        matches = self.matchPrefix(dst)
+        if not matches:
+            msg = composeNoRouteMessage()
+            self.send(src, msg)
+        else:
+            logestmatch = max(matches, key=lambda x: x[0])
+            dstSock = logestmatch[1]
+            msg = json.dumps(packet)
+            self.send(dstSock, msg)
+
+    def dumpTable(self, src):
+        data = list(map(lambda neighbor : {
+            "peer":neighbor[0],
+            "network":neighbor[1]["network"],
+            "netmask":neighbor[1]["netmask"],
+            "localpref":neighbor[1]["localpref"],
+            "origin":neighbor[1]["origin"],
+            "selfOrigin":neighbor[1]["selfOrigin"],
+            "ASPath":neighbor[1]["ASPath"],
+            },self.routingTable.items()))
+        table = {
+            "src": self.our_addr(src),
+            "dst": src,
+            "type": "table",
+            "msg": data
+        }
+        msg = json.dumps(table)
+        self.send(src, msg)
 
     def run(self):
         while True:
@@ -80,10 +150,9 @@ class Router:
                     self.announce(srcif, packet)
                 elif msgType == 'data':
                     # TODO
-                    pass
+                    self.forwardData(srcif, packet)
                 elif msgType == 'dump':
-                    # TODO
-                    pass
+                    self.dumpTable(srcif)
         return
 
 if __name__ == "__main__":
