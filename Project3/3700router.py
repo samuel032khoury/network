@@ -1,25 +1,24 @@
 #!/usr/bin/env -S python3 -u
 
-import argparse, socket, time, json, select, struct, sys, math
+import argparse, socket, time, copy, json, select, struct, sys, math
 
 class Router:
 
     relations = {}
     sockets = {}
     ports = {}
+    updateLog = []
+    routingTable = {}
 
     def __init__(self, asn, connections):
         print("Router at AS %s starting up" % asn)
         self.asn = asn
         for relationship in connections:
             port, neighbor, relation = relationship.split("-")
-
             self.sockets[neighbor] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.sockets[neighbor].bind(('localhost', 0))
             self.ports[neighbor] = int(port)
             self.relations[neighbor] = relation
-            print(neighbor)
-            print(self.relations, self.sockets, self.ports, sep="\n")
             self.send(neighbor, json.dumps({ "type": "handshake", "src": self.our_addr(neighbor), "dst": neighbor, "msg": {}  }))
 
     def our_addr(self, dst):
@@ -29,6 +28,35 @@ class Router:
 
     def send(self, network, message):
         self.sockets[network].sendto(message.encode('utf-8'), ('localhost', self.ports[network]))
+
+    def update(self, src, packet):
+        # log the update
+        self.updateLog.append(packet)
+        # put update msg (JSON) on the routing table
+        self.routingTable[src] = packet['msg']
+
+
+
+    def announce(self, src, packet):
+        # compose a forwarding update message
+        def composeForwardingMessage(ip):
+            incomingUpdate = copy.deepcopy(packet['msg'])
+            incomingUpdate['ASPath'].insert(0, self.asn)
+            incomingUpdate.pop('localpref')
+            incomingUpdate.pop('origin')
+            incomingUpdate.pop('selfOrigin')
+            outcomingUpdate = {
+                'src': self.our_addr(ip),
+                'dst': ip,
+                'type': "update",
+                'msg': incomingUpdate
+            }
+            return json.dumps(outcomingUpdate)
+        # announce the updates to other networks
+        for host in self.sockets.keys():
+            if host != src:
+                msg = composeForwardingMessage(host)
+                self.send(host, msg)
 
     def run(self):
         while True:
@@ -43,6 +71,18 @@ class Router:
                 msg = k.decode('utf-8')
 
                 print("Received message '%s' from %s" % (msg, srcif))
+
+                packet = json.loads(msg)
+                msgType = packet['type']   
+                if msgType == 'update':
+                    self.update(srcif, packet)
+                    self.announce(srcif, packet)
+                elif msgType == 'data':
+                    # TODO
+                    pass
+                elif msgType == 'dump':
+                    # TODO
+                    pass
         return
 
 if __name__ == "__main__":
@@ -52,3 +92,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     router = Router(args.asn, args.connections)
     router.run()
+
