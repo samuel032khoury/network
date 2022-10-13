@@ -20,7 +20,10 @@ class Router:
             self.sockets[neighbor].bind(('localhost', 0))
             self.ports[neighbor] = int(port)
             self.relations[neighbor] = relation
-            self.send(neighbor, json.dumps({ "type": "handshake", "src": self.routerOf(neighbor), "dst": neighbor, "msg": {}  }))
+            self.send(neighbor, json.dumps({
+                "type": "handshake", 
+                "src": self.routerOf(neighbor), 
+                "dst": neighbor, "msg": {}  }))
 
     def routerOf(self, dst):
         quads = list(int(qdn) for qdn in dst.split('.'))
@@ -84,17 +87,25 @@ class Router:
                         break
         return matchedList
     
-    def findBestRoute(self, longestmatch):
-        bestLocalPref = max(longestmatch, key = lambda x: x[2]['localpref'])[2]['localpref']
-        bestRoutes = list(filter(lambda x: x[2]['localpref'] == bestLocalPref, longestmatch))
+    def findBestRoute(self, longestMatch):
+        bestLocalPref = max(list(map(lambda x: x[2]['localpref'], longestMatch)))
+        bestRoutes = list(filter(lambda x: x[2]['localpref'] == bestLocalPref, longestMatch))
         if len(bestRoutes) == 1:
             return bestRoutes[0]
-        bestRoutes = list(filter(lambda x: x[2]['selfOrigin'], bestRoutes))
+        selfOriginRoutes = list(filter(lambda x: x[2]['selfOrigin'], bestRoutes))
+        bestRoutes = selfOriginRoutes if selfOriginRoutes else bestRoutes
         if len(bestRoutes) == 1:
             return bestRoutes[0]
-        if True:
-            # MORE ROUTE CHOOSING HERE
-            pass
+        shortestASPath = min(list(map(lambda x: len(x[2]['ASPath']),bestRoutes)))
+        bestRoutes = list(filter(lambda x: len(x[2]['ASPath']) == shortestASPath, bestRoutes))
+        if len(bestRoutes) == 1:
+            return bestRoutes[0]
+        igpRoutes = list(filter(lambda x: x[2]['origin'] == "IGP", bestRoutes))
+        egpRoutes = list(filter(lambda x: x[2]['origin'] == "EGP", bestRoutes))
+        unkRoutes = list(filter(lambda x: x[2]['origin'] == "UNK", bestRoutes))
+        bestRoutes = igpRoutes if igpRoutes else (egpRoutes if egpRoutes else unkRoutes)
+        if len(bestRoutes) == 1:
+            return bestRoutes[0]
         return min(bestRoutes, key = lambda x: x[0])
 
     def forwardData(self, src, packet):
@@ -111,21 +122,23 @@ class Router:
 
         dst = packet['dst']
         matches = self.matchPrefix(dst)
+
         if not matches:
+            dst = src
             msg = composeNoRouteMessage()
-            self.send(src, msg)
         else:
-            longestmatchLength = max(matches, key=lambda x: x[1])[1]
-            longestmatches = list(filter(
-                lambda x: x[1] == longestmatchLength,matches))
-            dstSock = longestmatches[0][0] if len(longestmatches) == 1 else self.findBestRoute(longestmatches)[0]
+            longestMatchLength = max(list(map(lambda x: x[1], matches)))
+            longestMatches = list(filter(
+                lambda x: x[1] == longestMatchLength,matches))
+            dst = (longestMatches[0][0] if 
+                len(longestMatches) == 1 else self.findBestRoute(longestMatches)[0])
             msg = json.dumps(packet)
-            self.send(dstSock, msg)
+        self.send(dst, msg)
 
     def dumpTable(self, src):
         def expandTable(table):
             expanded = []
-            for peer, nets in table:
+            for peer, nets in table.items():
                 for net in nets:
                     expanded.append((peer, net))
             return expanded
@@ -137,7 +150,7 @@ class Router:
             "origin":neighbor[1]["origin"],
             "selfOrigin":neighbor[1]["selfOrigin"],
             "ASPath":neighbor[1]["ASPath"],
-            },expandTable(self.routingTable.items())))
+            },expandTable(self.routingTable)))
         table = {
             "src": self.routerOf(src),
             "dst": src,
@@ -170,6 +183,8 @@ class Router:
                     self.forwardData(srcif, packet)
                 elif msgType == 'dump':
                     self.dumpTable(srcif)
+                else:
+                    raise Exception("Invalid behavior!")
         return
 
 if __name__ == "__main__":
