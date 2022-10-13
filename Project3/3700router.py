@@ -192,8 +192,7 @@ class Router:
         msg = json.dumps(table)
         self.send(src, msg)
 
-
-    def aggregate(self, src, packet):
+    def aggregate(self):
 
         def matchingAttr(netOne, netTwo):
             return (netOne["localpref"] == netTwo["localpref"] 
@@ -207,7 +206,7 @@ class Router:
             netMskBin = ipToBin(netOne['netmask'])
             netOneNwBin = ipToBin(netOne['network'])
             netTwoNwBin = ipToBin(netTwo['network'])
-            diffDig = netOneNwBin.rfind('1')
+            diffPos = netOneNwBin.rfind('1')
             return netOneNwBin[:diffPos - 1] == netTwoNwBin[: diffPos - 1]
 
         for currNeighbor in self.routingTable.keys():
@@ -239,9 +238,6 @@ class Router:
                 if traversed:
                     break
 
-
-
-
     def run(self):
         while True:
             socks = select.select(self.sockets.values(), [], [], 0.1)[0]
@@ -261,7 +257,7 @@ class Router:
                 if msgType == 'update':
                     self.update(src, packet)
                     self.announce(src, packet, True)
-                    self.aggregate(src, packet)
+                    self.aggregate()
                 elif msgType == 'withdraw':
                     self.withdraw(packet)
                 elif msgType == 'data':
