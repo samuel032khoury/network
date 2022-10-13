@@ -86,9 +86,13 @@ class Router:
     
     def findBestRoute(self, longestmatch):
         bestLocalPref = max(longestmatch, key = lambda x: x[2]['localpref'])[2]['localpref']
-        print("-------", bestLocalPref, "+++++")
         bestRoutes = list(filter(lambda x: x[2]['localpref'] == bestLocalPref, longestmatch))
-        return bestRoutes[0]
+        if len(bestRoutes) == 1:
+            return bestRoutes[0]
+        if True:
+            # MORE ROUTE CHOOSING HERE
+            pass
+        return min(bestRoutes, key = lambda x: x[0])
 
     def forwardData(self, src, packet):
         # NOTE: This might not work as expected
@@ -122,7 +126,6 @@ class Router:
                 for net in nets:
                     expanded.append((peer, net))
             return expanded
-        print('---------', expandTable(self.routingTable.items()), '+++++++++')
         data = list(map(lambda neighbor : {
             "peer":neighbor[0],
             "network":neighbor[1]["network"],
