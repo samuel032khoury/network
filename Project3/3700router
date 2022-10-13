@@ -2,14 +2,21 @@
 
 import argparse, socket, time, copy, json, select, struct, sys, math
 
+# Represent a BGP Router 
 class Router:
 
+    # stores the relationships between the current router and its neigboring router
     relations = {}
+    # stores the socket connections between the current router and its neigboring router
     sockets = {}
+    # stores the interfaces the neigboring router connecting into
     ports = {}
-    updateLog = []
-    withdrawLog = []
+    # the router's routing table
     routingTable = {}
+    # update logs
+    updateLog = []
+    # withdraw logs
+    withdrawLog = []
 
     def __init__(self, asn, connections):
         print("Router at AS %s starting up" % asn)
@@ -30,6 +37,7 @@ class Router:
         quads[3] = 1
         return "%d.%d.%d.%d" % (quads[0], quads[1], quads[2], quads[3])
 
+    # send a message from the router to the specified network
     def send(self, network, message):
         self.sockets[network].sendto(message.encode('utf-8'), ('localhost', self.ports[network]))
 
@@ -179,6 +187,7 @@ class Router:
         msg = json.dumps(table)
         self.send(src, msg)
 
+    # launch the router
     def run(self):
         while True:
             socks = select.select(self.sockets.values(), [], [], 0.1)[0]
