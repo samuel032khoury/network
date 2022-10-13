@@ -79,7 +79,7 @@ class Router:
                         # Abort
                         break
                     else:
-                        matchedList.append((matchingLength, neighbor, net))
+                        matchedList.append((neighbor, matchingLength, net))
                         # Teminate
                         break
         return matchedList
@@ -115,10 +115,10 @@ class Router:
             msg = composeNoRouteMessage()
             self.send(src, msg)
         else:
-            longestmatchLength = max(matches, key=lambda x: x[0])[0]
+            longestmatchLength = max(matches, key=lambda x: x[1])[1]
             longestmatches = list(filter(
-                lambda x: x[0] == longestmatchLength,matches))
-            dstSock = longestmatches[0][1] if len(longestmatches) == 1 else self.findBestRoute(longestmatches)[1]
+                lambda x: x[1] == longestmatchLength,matches))
+            dstSock = longestmatches[0][0] if len(longestmatches) == 1 else self.findBestRoute(longestmatches)[0]
             msg = json.dumps(packet)
             self.send(dstSock, msg)
 
