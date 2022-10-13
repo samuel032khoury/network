@@ -9,6 +9,7 @@ class Router:
     sockets = {}
     ports = {}
     updateLog = []
+    withdrawLog = []
     routingTable = defaultdict(list)
 
     def __init__(self, asn, connections):
@@ -39,19 +40,21 @@ class Router:
         # put the update msg (as JSON) on the routing table
         self.routingTable[src].append(packet['msg'])
 
-    def announce(self, src, packet):
+    def announce(self, src, packet, update):
         # compose a forwarding update message
         def composeForwardingMessage(dst):
-            outUpdate = copy.deepcopy(packet['msg'])
-            outUpdate['ASPath'].insert(0, self.asn)
-            outUpdate.pop('localpref', None)
-            outUpdate.pop('origin', None)
-            outUpdate.pop('selfOrigin', None)
+            if update:
+                outUpdate = copy.deepcopy(packet['msg'])
+                outUpdate['ASPath'].insert(0, self.asn)
+                outUpdate.pop('localpref', None)
+                outUpdate.pop('origin', None)
+                outUpdate.pop('selfOrigin', None)
+            outMessage = outUpdate if update else packet['msg']
             outPacket = {
                 'src': self.routerOf(dst),
                 'dst': dst,
-                'type': "update",
-                'msg': outUpdate
+                'type': "update" if update else 'withdraw',
+                'msg': outMessage
             }
             return json.dumps(outPacket)
         
@@ -59,8 +62,20 @@ class Router:
         # announce the updates to other networks
         for host in self.sockets.keys():
             if host != src:
-                msg = composeForwardingMessage(host)
-                self.send(host, msg)
+                if self.relations[host] == "cust" or self.relations[src] == "cust":
+                    msg = composeForwardingMessage(host)
+                    self.send(host, msg)
+
+    def withdraw(self, packet):
+        self.withdrawLog.append(packet)
+        src = packet['src']
+        withdrawList = packet['msg']
+        nets = self.routingTable[src]
+        for wdNet, wdMsk in map(lambda x: x.values(), withdrawList):
+            nets = ([net for net in nets
+             if not (net['network'] == wdNet and net['netmask'] == wdMsk)])
+        self.routingTable[src] = nets
+        self.announce(src, packet, False)
 
     def matchPrefix(self, dst):
         def ipToBin(ipAddr:str) -> str:
@@ -133,6 +148,9 @@ class Router:
             dst = (longestMatches[0][0] if 
                 len(longestMatches) == 1 else self.findBestRoute(longestMatches)[0])
             msg = json.dumps(packet)
+        if (self.relations[dst] != 'cust' and self.relations[src] != 'cust'):
+            dst = src
+            msg = composeNoRouteMessage()
         self.send(dst, msg)
 
     def dumpTable(self, src):
@@ -165,24 +183,26 @@ class Router:
             socks = select.select(self.sockets.values(), [], [], 0.1)[0]
             for conn in socks:
                 k, addr = conn.recvfrom(65535) # 
-                srcif = None
+                src = None
                 for sock in self.sockets:
                     if self.sockets[sock] == conn:
-                        srcif = sock
+                        src = sock
                         break
                 msg = k.decode('utf-8')
 
-                print("Received message '%s' from %s" % (msg, srcif))
+                print("Received message '%s' from %s" % (msg, src))
 
                 packet = json.loads(msg)
                 msgType = packet['type']   
                 if msgType == 'update':
-                    self.update(srcif, packet)
-                    self.announce(srcif, packet)
+                    self.update(src, packet)
+                    self.announce(src, packet, True)
+                elif msgType == 'withdraw':
+                    self.withdraw(packet)
                 elif msgType == 'data':
-                    self.forwardData(srcif, packet)
+                    self.forwardData(src, packet)
                 elif msgType == 'dump':
-                    self.dumpTable(srcif)
+                    self.dumpTable(src)
                 else:
                     raise Exception("Invalid behavior!")
         return
