@@ -245,8 +245,8 @@ class Router:
 
         for updt in updateLog:
             if (updt['msg']['network'] == packet['msg']['network'] and updt['msg']['netmask'] == packet['msg']['netmask']):
-                self.withdraw(packet)
                 needsDisaggregation = False
+                self.withdraw(packet)
                 break
 
         if needsDisaggregation:
@@ -278,8 +278,8 @@ class Router:
                     self.announce(src, packet, True)
                     self.aggregate()
                 elif msgType == 'withdraw':
-                    #self.disaggregate()
-                    self.withdraw(packet)
+                    self.disaggregate(packet)
+                    #self.withdraw(packet)
                 elif msgType == 'data':
                     self.forwardData(src, packet)
                 elif msgType == 'dump':
