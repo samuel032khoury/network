@@ -1,7 +1,6 @@
 #!/usr/bin/env -S python3 -u
 
 import argparse, socket, time, copy, json, select, struct, sys, math
-from collections import defaultdict
 
 class Router:
 
@@ -10,7 +9,7 @@ class Router:
     ports = {}
     updateLog = []
     withdrawLog = []
-    routingTable = defaultdict(list)
+    routingTable = {}
 
     def __init__(self, asn, connections):
         print("Router at AS %s starting up" % asn)
@@ -38,6 +37,8 @@ class Router:
         # log the update
         self.updateLog.append(packet)
         # put the update msg (as JSON) on the routing table
+        if src not in self.routingTable:
+            self.routingTable[src] = []
         self.routingTable[src].append(packet['msg'])
 
     def announce(self, src, packet, update):
