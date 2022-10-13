@@ -187,7 +187,29 @@ class Router:
         msg = json.dumps(table)
         self.send(src, msg)
 
-    # launch the router
+
+    def aggregate(self, src, packet):
+        def matchingProperties(table_entry, msg):
+            return table_entry["localpref"] == msg["localpref"] and table_entry["origin"] == msg["origin"] 
+            and table_entry["selfOrigin"] == msg["selfOrigin"] and table_entry["ASPath"] == msg["ASPath"]
+
+        def adjacentNumerically(table_entry, packet):
+            
+
+
+        for table_entry in routingTable:
+            if (matchingProperties(table_entry, packet["msg"]) and adjacentNumerically(table_entry, packet) and forwardToSameNextHopRouter(table_entry, packet)):
+                aggregated_route = {
+                    "network":table_entry["network"],
+                    "netmask":reduceNetmaskBit(table_entry["netmask"]),
+                    "localpref":table_entry["localpref"],
+                    "origin":table_entry["origin"],
+                    "selfOrigin":table_entry["selfOrigin"],
+                    "ASPath":table_entry["ASPath"]
+                }
+
+
+
     def run(self):
         while True:
             socks = select.select(self.sockets.values(), [], [], 0.1)[0]
@@ -205,6 +227,7 @@ class Router:
                 packet = json.loads(msg)
                 msgType = packet['type']   
                 if msgType == 'update':
+                    self.aggregate(src, packet)
                     self.update(src, packet)
                     self.announce(src, packet, True)
                 elif msgType == 'withdraw':
