@@ -82,6 +82,7 @@ class Router:
                     msg = composeForwardingMessage(host)
                     self.send(host, msg)
 
+
     def withdraw(self, packet):
         self.withdrawLog.append(packet)
         src = packet['src']
@@ -238,6 +239,24 @@ class Router:
                 if traversed:
                     break
 
+
+    def disaggregate(self, packet):
+        needsDisaggregation = True;
+
+        for updt in updateLog:
+            if (updt['msg']['network'] == packet['msg']['network'] and updt['msg']['netmask'] == packet['msg']['netmask']):
+                self.withdraw(packet)
+                needsDisaggregation = False
+                break
+
+        if needsDisaggregation:
+            netOne = {} # disaggregate and set properties - reverse aggregation: find first 0, convert to 1 for nmsk
+            netTwo = {} # disaggregate and set properties
+
+            self.withdraw(netOne)
+            self.withdraw(netTwo) 
+
+
     def run(self):
         while True:
             socks = select.select(self.sockets.values(), [], [], 0.1)[0]
@@ -259,6 +278,7 @@ class Router:
                     self.announce(src, packet, True)
                     self.aggregate()
                 elif msgType == 'withdraw':
+                    #self.disaggregate()
                     self.withdraw(packet)
                 elif msgType == 'data':
                     self.forwardData(src, packet)
