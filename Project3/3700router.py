@@ -1,6 +1,13 @@
 #!/usr/bin/env -S python3 -u
 
 import argparse, socket, time, copy, json, select, struct, sys, math
+from itertools import combinations
+
+def ipToBin(ipAddr:str) -> str:
+    return ''.join(list(map(lambda quad: format(int(quad), '08b'),ipAddr.split('.'))))
+
+def binToIp(binAddr:str) -> str:
+    return '.'.join(map(lambda x: str(int(x, 2)), [binAddr[i:i+8] for i in range(0, 31, 8)]))
 
 # Represent a BGP Router 
 class Router:
@@ -87,8 +94,6 @@ class Router:
         self.announce(src, packet, False)
 
     def matchPrefix(self, dst):
-        def ipToBin(ipAddr:str) -> str:
-            return ''.join(list(map(lambda quad: format(int(quad), '08b'),ipAddr.split('.'))))
         matchedList = []
         for neighbor, nets in self.routingTable.items():
             for net in nets:
@@ -189,24 +194,51 @@ class Router:
 
 
     def aggregate(self, src, packet):
-        def matchingProperties(table_entry, msg):
-            return table_entry["localpref"] == msg["localpref"] and table_entry["origin"] == msg["origin"] 
-            and table_entry["selfOrigin"] == msg["selfOrigin"] and table_entry["ASPath"] == msg["ASPath"]
 
-        def adjacentNumerically(table_entry, packet):
-            
+        def matchingAttr(netOne, netTwo):
+            return (netOne["localpref"] == netTwo["localpref"] 
+                and netOne["origin"] == netTwo["origin"] 
+                and netOne["selfOrigin"] == netTwo["selfOrigin"] 
+                and netOne["ASPath"] == netTwo["ASPath"])
 
+        def adjacentNumerically(netOne, netTwo):
+            if netOne['netmask'] != netTwo['netmask']:
+                return False
+            netMskBin = ipToBin(netOne['netmask'])
+            netOneNwBin = ipToBin(netOne['network'])
+            netTwoNwBin = ipToBin(netTwo['network'])
+            diffDig = netOneNwBin.rfind('1')
+            return netOneNwBin[:diffPos - 1] == netTwoNwBin[: diffPos - 1]
 
-        for table_entry in routingTable:
-            if (matchingProperties(table_entry, packet["msg"]) and adjacentNumerically(table_entry, packet) and forwardToSameNextHopRouter(table_entry, packet)):
-                aggregated_route = {
-                    "network":table_entry["network"],
-                    "netmask":reduceNetmaskBit(table_entry["netmask"]),
-                    "localpref":table_entry["localpref"],
-                    "origin":table_entry["origin"],
-                    "selfOrigin":table_entry["selfOrigin"],
-                    "ASPath":table_entry["ASPath"]
-                }
+        for currNeighbor in self.routingTable.keys():
+            maxMergeIter = len(self.routingTable[currNeighbor])
+            for mergeIter in range(maxMergeIter - 1):
+                currNetsList = self.routingTable[currNeighbor]
+                traversed = True
+                for (netOne, netTwo) in list(combinations(currNetsList, 2)):
+                    if (matchingAttr(netOne, netTwo) and adjacentNumerically(netOne, netTwo)):
+                        aggregatedNw = (netOne['network'] if netOne['network'] < netTwo['network']
+                                   else netTwo['network'])
+                        currMskBin = ipToBin(netOne["netmask"])
+                        lastOne = currMskBin.rfind('1')
+                        aggregatedMskBin = currMskBin[:lastOne] + '0' + currMskBin[lastOne + 1:]
+                        aggregatedMsk = binToIp(aggregatedMskBin)
+                        aggregatedRoute = {
+                            "network":aggregatedNw,
+                            "netmask":aggregatedMsk,
+                            "localpref":netOne["localpref"],
+                            "origin":netOne["origin"],
+                            "selfOrigin":netOne["selfOrigin"],
+                            "ASPath":netOne["ASPath"]
+                        }
+                        currNetsList.append(aggregatedRoute)
+                        currNetsList.remove(netOne)
+                        currNetsList.remove(netTwo)
+                        traversed = False
+                        break
+                if traversed:
+                    break
+
 
 
 
@@ -227,9 +259,9 @@ class Router:
                 packet = json.loads(msg)
                 msgType = packet['type']   
                 if msgType == 'update':
-                    self.aggregate(src, packet)
                     self.update(src, packet)
                     self.announce(src, packet, True)
+                    self.aggregate(src, packet)
                 elif msgType == 'withdraw':
                     self.withdraw(packet)
                 elif msgType == 'data':
