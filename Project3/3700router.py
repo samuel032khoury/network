@@ -1,6 +1,7 @@
 #!/usr/bin/env -S python3 -u
 
 import argparse, socket, time, copy, json, select, struct, sys, math
+from collections import defaultdict
 
 class Router:
 
@@ -8,7 +9,7 @@ class Router:
     sockets = {}
     ports = {}
     updateLog = []
-    routingTable = {}
+    routingTable = defaultdict(list)
 
     def __init__(self, asn, connections):
         print("Router at AS %s starting up" % asn)
@@ -33,7 +34,7 @@ class Router:
         # log the update
         self.updateLog.append(packet)
         # put the update msg (as JSON) on the routing table
-        self.routingTable[src] = packet['msg']
+        self.routingTable[src].append(packet['msg'])
 
     def announce(self, src, packet):
         # compose a forwarding update message
@@ -62,25 +63,32 @@ class Router:
         def ipToBin(ipAddr:str) -> str:
             return ''.join(list(map(lambda quad: format(int(quad), '08b'),ipAddr.split('.'))))
         matchedList = []
-        for neighbor, info in self.routingTable.items():
-            dstBin = ipToBin(dst)
-            networkBin = ipToBin(info['network'])
-            netmaskBin = ipToBin(info['netmask'])
-            matchingLength = 0
-            for mask, expect, actual in zip(netmaskBin, networkBin, dstBin):
-                mask = int(mask)
-                expect = int(expect)
-                actual = int(actual)
-                if bool(mask) and (expect == actual):
-                    matchingLength += 1
-                elif bool(mask) and (expect != actual):
-                    # Abort
-                    break
-                else:
-                    matchedList.append((matchingLength, neighbor))
-                    # Teminate
-                    break
+        for neighbor, nets in self.routingTable.items():
+            for net in nets:
+                dstBin = ipToBin(dst)
+                networkBin = ipToBin(net['network'])
+                netmaskBin = ipToBin(net['netmask'])
+                matchingLength = 0
+                for mask, expect, actual in zip(netmaskBin, networkBin, dstBin):
+                    mask = int(mask)
+                    expect = int(expect)
+                    actual = int(actual)
+                    if bool(mask) and (expect == actual):
+                        matchingLength += 1
+                    elif bool(mask) and (expect != actual):
+                        # Abort
+                        break
+                    else:
+                        matchedList.append((matchingLength, neighbor, net))
+                        # Teminate
+                        break
         return matchedList
+    
+    def findBestRoute(self, longestmatch):
+        bestLocalPref = max(longestmatch, key = lambda x: x[2]['localpref'])[2]['localpref']
+        print("-------", bestLocalPref, "+++++")
+        bestRoutes = list(filter(lambda x: x[2]['localpref'] == bestLocalPref, longestmatch))
+        return bestRoutes[0]
 
     def forwardData(self, src, packet):
         # NOTE: This might not work as expected
@@ -100,12 +108,21 @@ class Router:
             msg = composeNoRouteMessage()
             self.send(src, msg)
         else:
-            logestmatch = max(matches, key=lambda x: x[0])
-            dstSock = logestmatch[1]
+            longestmatchLength = max(matches, key=lambda x: x[0])[0]
+            longestmatches = list(filter(
+                lambda x: x[0] == longestmatchLength,matches))
+            dstSock = self.findBestRoute(longestmatches)[1]
             msg = json.dumps(packet)
             self.send(dstSock, msg)
 
     def dumpTable(self, src):
+        def expandTable(table):
+            expanded = []
+            for peer, nets in table:
+                for net in nets:
+                    expanded.append((peer, net))
+            return expanded
+        print('---------', expandTable(self.routingTable.items()), '+++++++++')
         data = list(map(lambda neighbor : {
             "peer":neighbor[0],
             "network":neighbor[1]["network"],
@@ -114,7 +131,7 @@ class Router:
             "origin":neighbor[1]["origin"],
             "selfOrigin":neighbor[1]["selfOrigin"],
             "ASPath":neighbor[1]["ASPath"],
-            },self.routingTable.items()))
+            },expandTable(self.routingTable.items())))
         table = {
             "src": self.routerOf(src),
             "dst": src,
@@ -144,7 +161,6 @@ class Router:
                     self.update(srcif, packet)
                     self.announce(srcif, packet)
                 elif msgType == 'data':
-                    # TODO
                     self.forwardData(srcif, packet)
                 elif msgType == 'dump':
                     self.dumpTable(srcif)
