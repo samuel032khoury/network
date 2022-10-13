@@ -89,6 +89,9 @@ class Router:
         bestRoutes = list(filter(lambda x: x[2]['localpref'] == bestLocalPref, longestmatch))
         if len(bestRoutes) == 1:
             return bestRoutes[0]
+        bestRoutes = list(filter(lambda x: x[2]['selfOrigin'], bestRoutes))
+        if len(bestRoutes) == 1:
+            return bestRoutes[0]
         if True:
             # MORE ROUTE CHOOSING HERE
             pass
@@ -115,7 +118,7 @@ class Router:
             longestmatchLength = max(matches, key=lambda x: x[0])[0]
             longestmatches = list(filter(
                 lambda x: x[0] == longestmatchLength,matches))
-            dstSock = self.findBestRoute(longestmatches)[1]
+            dstSock = longestmatches[0][1] if len(longestmatches) == 1 else self.findBestRoute(longestmatches)[1]
             msg = json.dumps(packet)
             self.send(dstSock, msg)
 
