@@ -14,11 +14,11 @@ def binToIp(binAddr:str) -> str:
 # Represent a BGP Router 
 class Router:
 
-    # stores the relationships between the current router and its neigboring router
+    # stores the relationships between the current router and its neighboring router
     relations = {}
-    # stores the socket connections between the current router and its neigboring router
+    # stores the socket connections between the current router and its neighboring router
     sockets = {}
-    # stores the interfaces the neigboring router connecting into
+    # stores the interfaces the neighboring router connecting into
     ports = {}
     # the router's routing table
     routingTable = {}
@@ -166,7 +166,7 @@ class Router:
                         traversed = False
                         break
                 # The entire list is traversed without entering in the merging branch implies
-                # everything has been merged. We thus break current nerighbor's merging iteration
+                # everything has been merged. We thus break current neighbor's merging iteration
                 if traversed:
                     break
 
@@ -193,7 +193,7 @@ class Router:
                             break
                         else:
                             matches.append((neighbor, matchingLength, route))
-                            # Teminate the match
+                            # Terminate the match
                             break
             # The returned list consists of tuples of neighbor connection address, the length of 
             # the matched prefix, and the route meta information
@@ -229,24 +229,24 @@ class Router:
             bestRoutes = igpRoutes if igpRoutes else (egpRoutes if egpRoutes else unkRoutes)
             if len(bestRoutes) == 1:
                 return bestRoutes[0]
-            # defult fall back to find the lowest nerighbor IP address
+            # default fall back to find the lowest neighbor IP address
             return min(bestRoutes, key = lambda x: x[0])
 
         # Compose a message that notifies the sender our router cannot route the message
         def composeNoRouteMessage():
-            noRoutepacket = {
+            noRoutePacket = {
                 'src' : self.routerOf(src),
                 'dst' : packet['src'],
                 'type': "no route",
                 "msg" : {}
             }
-            return json.dumps(noRoutepacket)
+            return json.dumps(noRoutePacket)
         
         # find all possible routes by matching the prefix of the destination of the message
         dst = packet['dst']
         matches = matchPrefix(dst)
 
-        # if no availabe route, send back a no-route message
+        # if no available route, send back a no-route message
         if not matches:
             dst = src
             msg = composeNoRouteMessage()
@@ -263,7 +263,7 @@ class Router:
 
     # Dump all entries in the table, and send it back to the request source
     def dumpTable(self, src):
-        # Resturcture the routing table from one to one (list of routes) to one to many (routes)
+        # Restructure the routing table from one to one (list of routes) to one to many (routes)
         def expandRoutingTable(routingTable):
             expanded = []
             for neighbor, routes in routingTable.items():
