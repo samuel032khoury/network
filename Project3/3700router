@@ -97,7 +97,6 @@ class Router:
             }
             return json.dumps(outPacket)
         
-        # NOTE: Currently assume all neighbors are customers
         # announce the updates to other networks
         for host in self.sockets.keys():
             if host != src:
@@ -153,7 +152,7 @@ class Router:
 
     def forwardData(self, src, packet):
         def matchPrefix(dst):
-            matchedList = []
+            matches = []
             for neighbor, nets in self.routingTable.items():
                 for net in nets:
                     dstBin = ipToBin(dst)
@@ -167,36 +166,46 @@ class Router:
                         if bool(mask) and (expect == actual):
                             matchingLength += 1
                         elif bool(mask) and (expect != actual):
-                            # Abort
+                            # Abort the match
                             break
                         else:
-                            matchedList.append((neighbor, matchingLength, net))
-                            # Teminate
+                            matches.append((neighbor, matchingLength, net))
+                            # Teminate the match
                             break
-            return matchedList
+            return matches
         
-        def findBestRoute(longestMatch):
-            bestLocalPref = max(list(map(lambda x: x[2]['localpref'], longestMatch)))
-            bestRoutes = list(filter(lambda x: x[2]['localpref'] == bestLocalPref, longestMatch))
+        def findBestRoute(matches):
+            # to find the logest prefix matches
+            longestMatchLength = max(list(map(lambda x: x[1], matches)))
+            bestRoutes = list(filter(lambda x: x[1] == longestMatchLength,matches))
             if len(bestRoutes) == 1:
                 return bestRoutes[0]
+            # to find higher local preference matches
+            bestLocalPref = max(list(map(lambda x: x[2]['localpref'], bestRoutes)))
+            bestRoutes = list(filter(lambda x: x[2]['localpref'] == bestLocalPref, bestRoutes))
+            if len(bestRoutes) == 1:
+                return bestRoutes[0]
+            # to find self origin routes
             selfOriginRoutes = list(filter(lambda x: x[2]['selfOrigin'], bestRoutes))
             bestRoutes = selfOriginRoutes if selfOriginRoutes else bestRoutes
             if len(bestRoutes) == 1:
                 return bestRoutes[0]
+            # to find routes that via a shortest AS path
             shortestASPath = min(list(map(lambda x: len(x[2]['ASPath']),bestRoutes)))
             bestRoutes = list(filter(lambda x: len(x[2]['ASPath']) == shortestASPath, bestRoutes))
             if len(bestRoutes) == 1:
                 return bestRoutes[0]
+            # to find routes that have preferred origin
             igpRoutes = list(filter(lambda x: x[2]['origin'] == "IGP", bestRoutes))
             egpRoutes = list(filter(lambda x: x[2]['origin'] == "EGP", bestRoutes))
             unkRoutes = list(filter(lambda x: x[2]['origin'] == "UNK", bestRoutes))
+            ## let best routes be the first non-empty preferred list
             bestRoutes = igpRoutes if igpRoutes else (egpRoutes if egpRoutes else unkRoutes)
             if len(bestRoutes) == 1:
                 return bestRoutes[0]
+            # defult fall back to find the lowest nerighbor IP address
             return min(bestRoutes, key = lambda x: x[0])
 
-        # NOTE: This might not work as expected
         def composeNoRouteMessage():
             noRoutepacket = {
                 'src' : self.routerOf(src),
@@ -214,10 +223,7 @@ class Router:
             dst = src
             msg = composeNoRouteMessage()
         else:
-            longestMatchLength = max(list(map(lambda x: x[1], matches)))
-            longestMatches = list(filter(lambda x: x[1] == longestMatchLength,matches))
-            dst = (longestMatches[0][0] if 
-                len(longestMatches) == 1 else findBestRoute(longestMatches)[0])
+            dst = findBestRoute(matches)[0]
             msg = json.dumps(packet)
         if (self.relations[dst] != 'cust' and self.relations[src] != 'cust'):
             dst = src
