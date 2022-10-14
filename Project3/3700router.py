@@ -3,9 +3,11 @@
 import argparse, socket, time, copy, json, select, struct, sys, math
 from itertools import combinations
 
+# Convert a IPv4 address to its 32-bit representation in string
 def ipToBin(ipAddr:str) -> str:
     return ''.join(list(map(lambda quad: format(int(quad), '08b'),ipAddr.split('.'))))
 
+# Convert a 32-bit string to its IPv4 representation
 def binToIp(binAddr:str) -> str:
     return '.'.join(map(lambda octa: str(int(octa, 2)), [binAddr[i:i+8] for i in range(0, 31, 8)]))
 
@@ -175,12 +177,12 @@ class Router:
             return matches
         
         def findBestRoute(matches):
-            # to find the logest prefix matches
+            # to find the logest prefix match(es)
             longestMatchLength = max(list(map(lambda x: x[1], matches)))
             bestRoutes = list(filter(lambda x: x[1] == longestMatchLength,matches))
             if len(bestRoutes) == 1:
                 return bestRoutes[0]
-            # to find higher local preference matches
+            # to find highest local preference match(es)
             bestLocalPref = max(list(map(lambda x: x[2]['localpref'], bestRoutes)))
             bestRoutes = list(filter(lambda x: x[2]['localpref'] == bestLocalPref, bestRoutes))
             if len(bestRoutes) == 1:
@@ -190,7 +192,7 @@ class Router:
             bestRoutes = selfOriginRoutes if selfOriginRoutes else bestRoutes
             if len(bestRoutes) == 1:
                 return bestRoutes[0]
-            # to find routes that via a shortest AS path
+            # to find routes that via shortest AS path
             shortestASPath = min(list(map(lambda x: len(x[2]['ASPath']),bestRoutes)))
             bestRoutes = list(filter(lambda x: len(x[2]['ASPath']) == shortestASPath, bestRoutes))
             if len(bestRoutes) == 1:
