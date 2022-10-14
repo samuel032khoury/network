@@ -56,6 +56,28 @@ class Router:
             self.routingTable[src] = []
         self.routingTable[src].append(packet['msg'])
 
+    def withdraw(self, packet):
+
+        def disaggregate(src):
+            srcUpdate = list(filter(lambda update: update['src'] == src, self.updateLog))
+            srcUpdateMsg = list(map(lambda update:update['msg'], srcUpdate))
+
+            srcWithdraw = list(filter(lambda update: update['src'] == src, self.withdrawLog))
+            withdrawLists = list(map(lambda withdrawn:withdrawn['msg'], srcWithdraw))
+            withdrawList = ([withdrawItem for withdrawList in withdrawLists 
+                            for withdrawItem in withdrawList])
+
+            for wdNet, wdMsk in map(lambda wdItem: wdItem.values(), withdrawList):
+                srcUpdateMsg = ([msg for msg in srcUpdateMsg if msg['network'] != wdNet or msg['netmask'] != wdMsk])
+            self.routingTable[src] = srcUpdateMsg
+            self.aggregate(target = src)
+
+
+        self.withdrawLog.append(packet)
+        src = packet['src']
+        disaggregate(src)
+        self.announce(src, packet, False)
+
     def announce(self, src, packet, update):
         # compose a forwarding update message
         def composeForwardingMessage(dst):
@@ -81,125 +103,6 @@ class Router:
                 if self.relations[host] == "cust" or self.relations[src] == "cust":
                     msg = composeForwardingMessage(host)
                     self.send(host, msg)
-
-    def withdraw(self, packet):
-
-        def disaggregate(src):
-            srcUpdate = list(filter(lambda update: update['src'] == src, self.updateLog))
-            srcUpdateMsg = list(map(lambda update:update['msg'], srcUpdate))
-
-            srcWithdraw = list(filter(lambda update: update['src'] == src, self.withdrawLog))
-            withdrawLists = list(map(lambda withdrawn:withdrawn['msg'], srcWithdraw))
-            withdrawList = [withdrawItem for withdrawList in withdrawLists for withdrawItem in withdrawList]
-
-            for wdNet, wdMsk in map(lambda wdItem: wdItem.values(), withdrawList):
-                srcUpdateMsg = [msg for msg in srcUpdateMsg if msg['network'] != wdNet or msg['netmask'] != wdMsk]
-            self.routingTable[src] = srcUpdateMsg
-            self.aggregate(target = src)
-
-
-        self.withdrawLog.append(packet)
-        src = packet['src']
-        disaggregate(src)
-        self.announce(src, packet, False)
-
-    def matchPrefix(self, dst):
-        matchedList = []
-        for neighbor, nets in self.routingTable.items():
-            for net in nets:
-                dstBin = ipToBin(dst)
-                networkBin = ipToBin(net['network'])
-                netmaskBin = ipToBin(net['netmask'])
-                matchingLength = 0
-                for mask, expect, actual in zip(netmaskBin, networkBin, dstBin):
-                    mask = int(mask)
-                    expect = int(expect)
-                    actual = int(actual)
-                    if bool(mask) and (expect == actual):
-                        matchingLength += 1
-                    elif bool(mask) and (expect != actual):
-                        # Abort
-                        break
-                    else:
-                        matchedList.append((neighbor, matchingLength, net))
-                        # Teminate
-                        break
-        return matchedList
-    
-    def findBestRoute(self, longestMatch):
-        bestLocalPref = max(list(map(lambda x: x[2]['localpref'], longestMatch)))
-        bestRoutes = list(filter(lambda x: x[2]['localpref'] == bestLocalPref, longestMatch))
-        if len(bestRoutes) == 1:
-            return bestRoutes[0]
-        selfOriginRoutes = list(filter(lambda x: x[2]['selfOrigin'], bestRoutes))
-        bestRoutes = selfOriginRoutes if selfOriginRoutes else bestRoutes
-        if len(bestRoutes) == 1:
-            return bestRoutes[0]
-        shortestASPath = min(list(map(lambda x: len(x[2]['ASPath']),bestRoutes)))
-        bestRoutes = list(filter(lambda x: len(x[2]['ASPath']) == shortestASPath, bestRoutes))
-        if len(bestRoutes) == 1:
-            return bestRoutes[0]
-        igpRoutes = list(filter(lambda x: x[2]['origin'] == "IGP", bestRoutes))
-        egpRoutes = list(filter(lambda x: x[2]['origin'] == "EGP", bestRoutes))
-        unkRoutes = list(filter(lambda x: x[2]['origin'] == "UNK", bestRoutes))
-        bestRoutes = igpRoutes if igpRoutes else (egpRoutes if egpRoutes else unkRoutes)
-        if len(bestRoutes) == 1:
-            return bestRoutes[0]
-        return min(bestRoutes, key = lambda x: x[0])
-
-    def forwardData(self, src, packet):
-        # NOTE: This might not work as expected
-        def composeNoRouteMessage():
-            noRoutepacket = {
-                'src' : self.routerOf(src),
-                'dst' : packet['src'],
-                'type': "no route",
-                "msg" : {}
-            }
-            return json.dumps(noRoutepacket)
-            
-
-        dst = packet['dst']
-        matches = self.matchPrefix(dst)
-
-        if not matches:
-            dst = src
-            msg = composeNoRouteMessage()
-        else:
-            longestMatchLength = max(list(map(lambda x: x[1], matches)))
-            longestMatches = list(filter(lambda x: x[1] == longestMatchLength,matches))
-            dst = (longestMatches[0][0] if 
-                len(longestMatches) == 1 else self.findBestRoute(longestMatches)[0])
-            msg = json.dumps(packet)
-        if (self.relations[dst] != 'cust' and self.relations[src] != 'cust'):
-            dst = src
-            msg = composeNoRouteMessage()
-        self.send(dst, msg)
-
-    def dumpTable(self, src):
-        def expandTable(table):
-            expanded = []
-            for peer, nets in table.items():
-                for net in nets:
-                    expanded.append((peer, net))
-            return expanded
-        data = list(map(lambda neighbor : {
-            "peer":neighbor[0],
-            "network":neighbor[1]["network"],
-            "netmask":neighbor[1]["netmask"],
-            "localpref":neighbor[1]["localpref"],
-            "origin":neighbor[1]["origin"],
-            "selfOrigin":neighbor[1]["selfOrigin"],
-            "ASPath":neighbor[1]["ASPath"],
-            },expandTable(self.routingTable)))
-        table = {
-            "src": self.routerOf(src),
-            "dst": src,
-            "type": "table",
-            "msg": data
-        }
-        msg = json.dumps(table)
-        self.send(src, msg)
 
     def aggregate(self, target=None):
         def matchingAttr(netOne, netTwo):
@@ -247,6 +150,104 @@ class Router:
                 if traversed:
                     break
 
+    def forwardData(self, src, packet):
+        def matchPrefix(dst):
+            matchedList = []
+            for neighbor, nets in self.routingTable.items():
+                for net in nets:
+                    dstBin = ipToBin(dst)
+                    networkBin = ipToBin(net['network'])
+                    netmaskBin = ipToBin(net['netmask'])
+                    matchingLength = 0
+                    for mask, expect, actual in zip(netmaskBin, networkBin, dstBin):
+                        mask = int(mask)
+                        expect = int(expect)
+                        actual = int(actual)
+                        if bool(mask) and (expect == actual):
+                            matchingLength += 1
+                        elif bool(mask) and (expect != actual):
+                            # Abort
+                            break
+                        else:
+                            matchedList.append((neighbor, matchingLength, net))
+                            # Teminate
+                            break
+            return matchedList
+        
+        def findBestRoute(longestMatch):
+            bestLocalPref = max(list(map(lambda x: x[2]['localpref'], longestMatch)))
+            bestRoutes = list(filter(lambda x: x[2]['localpref'] == bestLocalPref, longestMatch))
+            if len(bestRoutes) == 1:
+                return bestRoutes[0]
+            selfOriginRoutes = list(filter(lambda x: x[2]['selfOrigin'], bestRoutes))
+            bestRoutes = selfOriginRoutes if selfOriginRoutes else bestRoutes
+            if len(bestRoutes) == 1:
+                return bestRoutes[0]
+            shortestASPath = min(list(map(lambda x: len(x[2]['ASPath']),bestRoutes)))
+            bestRoutes = list(filter(lambda x: len(x[2]['ASPath']) == shortestASPath, bestRoutes))
+            if len(bestRoutes) == 1:
+                return bestRoutes[0]
+            igpRoutes = list(filter(lambda x: x[2]['origin'] == "IGP", bestRoutes))
+            egpRoutes = list(filter(lambda x: x[2]['origin'] == "EGP", bestRoutes))
+            unkRoutes = list(filter(lambda x: x[2]['origin'] == "UNK", bestRoutes))
+            bestRoutes = igpRoutes if igpRoutes else (egpRoutes if egpRoutes else unkRoutes)
+            if len(bestRoutes) == 1:
+                return bestRoutes[0]
+            return min(bestRoutes, key = lambda x: x[0])
+
+        # NOTE: This might not work as expected
+        def composeNoRouteMessage():
+            noRoutepacket = {
+                'src' : self.routerOf(src),
+                'dst' : packet['src'],
+                'type': "no route",
+                "msg" : {}
+            }
+            return json.dumps(noRoutepacket)
+            
+
+        dst = packet['dst']
+        matches = matchPrefix(dst)
+
+        if not matches:
+            dst = src
+            msg = composeNoRouteMessage()
+        else:
+            longestMatchLength = max(list(map(lambda x: x[1], matches)))
+            longestMatches = list(filter(lambda x: x[1] == longestMatchLength,matches))
+            dst = (longestMatches[0][0] if 
+                len(longestMatches) == 1 else findBestRoute(longestMatches)[0])
+            msg = json.dumps(packet)
+        if (self.relations[dst] != 'cust' and self.relations[src] != 'cust'):
+            dst = src
+            msg = composeNoRouteMessage()
+        self.send(dst, msg)
+
+    def dumpTable(self, src):
+        def expandTable(table):
+            expanded = []
+            for peer, nets in table.items():
+                for net in nets:
+                    expanded.append((peer, net))
+            return expanded
+        data = list(map(lambda neighbor : {
+            "peer":neighbor[0],
+            "network":neighbor[1]["network"],
+            "netmask":neighbor[1]["netmask"],
+            "localpref":neighbor[1]["localpref"],
+            "origin":neighbor[1]["origin"],
+            "selfOrigin":neighbor[1]["selfOrigin"],
+            "ASPath":neighbor[1]["ASPath"],
+            },expandTable(self.routingTable)))
+        table = {
+            "src": self.routerOf(src),
+            "dst": src,
+            "type": "table",
+            "msg": data
+        }
+        msg = json.dumps(table)
+        self.send(src, msg)
+
     def run(self):
         while True:
             socks = select.select(self.sockets.values(), [], [], 0.1)[0]
@@ -284,4 +285,3 @@ if __name__ == "__main__":
     args = parser.parse_args()
     router = Router(args.asn, args.connections)
     router.run()
-
