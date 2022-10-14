@@ -7,7 +7,7 @@ def ipToBin(ipAddr:str) -> str:
     return ''.join(list(map(lambda quad: format(int(quad), '08b'),ipAddr.split('.'))))
 
 def binToIp(binAddr:str) -> str:
-    return '.'.join(map(lambda x: str(int(x, 2)), [binAddr[i:i+8] for i in range(0, 31, 8)]))
+    return '.'.join(map(lambda octa: str(int(octa, 2)), [binAddr[i:i+8] for i in range(0, 31, 8)]))
 
 # Represent a BGP Router 
 class Router:
@@ -82,16 +82,25 @@ class Router:
                     msg = composeForwardingMessage(host)
                     self.send(host, msg)
 
-
     def withdraw(self, packet):
+
+        def disaggregate(src):
+            srcUpdate = list(filter(lambda update: update['src'] == src, self.updateLog))
+            srcUpdateMsg = list(map(lambda update:update['msg'], srcUpdate))
+
+            srcWithdraw = list(filter(lambda update: update['src'] == src, self.withdrawLog))
+            withdrawLists = list(map(lambda withdrawn:withdrawn['msg'], srcWithdraw))
+            withdrawList = [withdrawItem for withdrawList in withdrawLists for withdrawItem in withdrawList]
+
+            for wdNet, wdMsk in map(lambda wdItem: wdItem.values(), withdrawList):
+                srcUpdateMsg = [msg for msg in srcUpdateMsg if msg['network'] != wdNet or msg['netmask'] != wdMsk]
+            self.routingTable[src] = srcUpdateMsg
+            self.aggregate(target = src)
+
+
         self.withdrawLog.append(packet)
         src = packet['src']
-        withdrawList = packet['msg']
-        nets = self.routingTable[src]
-        for wdNet, wdMsk in map(lambda x: x.values(), withdrawList):
-            nets = ([net for net in nets
-             if not (net['network'] == wdNet and net['netmask'] == wdMsk)])
-        self.routingTable[src] = nets
+        disaggregate(src)
         self.announce(src, packet, False)
 
     def matchPrefix(self, dst):
@@ -158,8 +167,7 @@ class Router:
             msg = composeNoRouteMessage()
         else:
             longestMatchLength = max(list(map(lambda x: x[1], matches)))
-            longestMatches = list(filter(
-                lambda x: x[1] == longestMatchLength,matches))
+            longestMatches = list(filter(lambda x: x[1] == longestMatchLength,matches))
             dst = (longestMatches[0][0] if 
                 len(longestMatches) == 1 else self.findBestRoute(longestMatches)[0])
             msg = json.dumps(packet)
@@ -193,8 +201,7 @@ class Router:
         msg = json.dumps(table)
         self.send(src, msg)
 
-    def aggregate(self):
-
+    def aggregate(self, target=None):
         def matchingAttr(netOne, netTwo):
             return (netOne["localpref"] == netTwo["localpref"] 
                 and netOne["origin"] == netTwo["origin"] 
@@ -208,9 +215,10 @@ class Router:
             netOneNwBin = ipToBin(netOne['network'])
             netTwoNwBin = ipToBin(netTwo['network'])
             diffPos = netOneNwBin.rfind('1')
-            return netOneNwBin[:diffPos - 1] == netTwoNwBin[: diffPos - 1]
+            return netOneNwBin[:diffPos] == netTwoNwBin[: diffPos]
 
-        for currNeighbor in self.routingTable.keys():
+        iterTarget = [target] if target else self.routingTable.keys()
+        for currNeighbor in iterTarget:
             maxMergeIter = len(self.routingTable[currNeighbor])
             for mergeIter in range(maxMergeIter - 1):
                 currNetsList = self.routingTable[currNeighbor]
@@ -239,24 +247,6 @@ class Router:
                 if traversed:
                     break
 
-
-    def disaggregate(self, packet):
-        needsDisaggregation = True;
-
-        for updt in updateLog:
-            if (updt['msg']['network'] == packet['msg']['network'] and updt['msg']['netmask'] == packet['msg']['netmask']):
-                needsDisaggregation = False
-                self.withdraw(packet)
-                break
-
-        if needsDisaggregation:
-            netOne = {} # disaggregate and set properties - reverse aggregation: find first 0, convert to 1 for nmsk
-            netTwo = {} # disaggregate and set properties
-
-            self.withdraw(netOne)
-            self.withdraw(netTwo) 
-
-
     def run(self):
         while True:
             socks = select.select(self.sockets.values(), [], [], 0.1)[0]
@@ -278,8 +268,7 @@ class Router:
                     self.announce(src, packet, True)
                     self.aggregate()
                 elif msgType == 'withdraw':
-                    self.disaggregate(packet)
-                    #self.withdraw(packet)
+                    self.withdraw(packet)
                 elif msgType == 'data':
                     self.forwardData(src, packet)
                 elif msgType == 'dump':
