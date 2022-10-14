@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 import socket
 import sys, os
 
@@ -44,6 +44,12 @@ def parseArg():
         #   a (exceptional) control command for simplicity
         assert len(sys.argv) == 3, "The program receives at most 2 arguments in control mode!"
 
+    # • if the program runs in FILE_MODE, there must be 2 more positional arguments besides the
+    # command argument, the first one is the source (file) argument, the second one is the target 
+    # (file) argument
+    # • if the program doesn't run in FILE_MODE, there must be exactly 1 more positional argument
+    # as the command target, there is no use of source so we set it to None
+
     source = sys.argv[-2] if FILE_MODE else None
     target = sys.argv[-1]
 
@@ -64,6 +70,9 @@ def parseArg():
         else:
             raise AssertionError("The control operation needs a remote URL!")
 
+    # target is always a string, we check if it starts with "ftp://"
+    #   • if target starts with "ftp://", we know target is a url, and source is a local file/None
+    #   • if target doesn't start with "ftp://", we know target is the local, and source is a url
     url = target if target.startswith("ftp://") else source
     local = source if url==target else target
 

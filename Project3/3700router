@@ -63,12 +63,13 @@ class Router:
             srcUpdateMsg = list(map(lambda update:update['msg'], srcUpdate))
 
             srcWithdraw = list(filter(lambda update: update['src'] == src, self.withdrawLog))
-            withdrawLists = list(map(lambda withdrawn:withdrawn['msg'], srcWithdraw))
-            withdrawList = ([withdrawItem for withdrawList in withdrawLists 
-                            for withdrawItem in withdrawList])
+            srcWdLists = list(map(lambda withdrawn:withdrawn['msg'], srcWithdraw))
+            srcWdList = ([withdrawItem for srcWdList in srcWdLists 
+                            for withdrawItem in srcWdList])
 
-            for wdNet, wdMsk in map(lambda wdItem: wdItem.values(), withdrawList):
-                srcUpdateMsg = ([msg for msg in srcUpdateMsg if msg['network'] != wdNet or msg['netmask'] != wdMsk])
+            for wdNet, wdMsk in map(lambda wdItem: wdItem.values(), srcWdList):
+                srcUpdateMsg = ([msg for msg in srcUpdateMsg 
+                                if msg['network'] != wdNet or msg['netmask'] != wdMsk])
             self.routingTable[src] = srcUpdateMsg
             self.aggregate(target = src)
 
@@ -105,13 +106,13 @@ class Router:
                     self.send(host, msg)
 
     def aggregate(self, target=None):
-        def matchingAttr(netOne, netTwo):
+        def sameAttr(netOne, netTwo):
             return (netOne["localpref"] == netTwo["localpref"] 
                 and netOne["origin"] == netTwo["origin"] 
                 and netOne["selfOrigin"] == netTwo["selfOrigin"] 
                 and netOne["ASPath"] == netTwo["ASPath"])
 
-        def adjacentNumerically(netOne, netTwo):
+        def adjacentNets(netOne, netTwo):
             if netOne['netmask'] != netTwo['netmask']:
                 return False
             netMskBin = ipToBin(netOne['netmask'])
@@ -127,7 +128,7 @@ class Router:
                 currNetsList = self.routingTable[currNeighbor]
                 traversed = True
                 for (netOne, netTwo) in list(combinations(currNetsList, 2)):
-                    if (matchingAttr(netOne, netTwo) and adjacentNumerically(netOne, netTwo)):
+                    if (sameAttr(netOne, netTwo) and adjacentNets(netOne, netTwo)):
                         aggregatedNw = (netOne['network'] if netOne['network'] < netTwo['network']
                                    else netTwo['network'])
                         currMskBin = ipToBin(netOne["netmask"])
@@ -230,6 +231,7 @@ class Router:
                 for net in nets:
                     expanded.append((peer, net))
             return expanded
+
         data = list(map(lambda neighbor : {
             "peer":neighbor[0],
             "network":neighbor[1]["network"],
