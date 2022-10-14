@@ -41,15 +41,17 @@ class Router:
                 "src": self.routerOf(neighbor), 
                 "dst": neighbor, "msg": {}  }))
 
-    def routerOf(self, dst):
-        quads = list(int(qdn) for qdn in dst.split('.'))
+    # Get the ip address of the router of the given ip address
+    def routerOf(self, addr):
+        quads = list(int(qdn) for qdn in addr.split('.'))
         quads[3] = 1
         return "%d.%d.%d.%d" % (quads[0], quads[1], quads[2], quads[3])
 
-    # send a message from the router to the specified network
+    # Send a message from the router to the specified network
     def send(self, network, message):
         self.sockets[network].sendto(message.encode('utf-8'), ('localhost', self.ports[network]))
 
+    # Log the update and update the routing table accordingly, then aggregate the table
     def update(self, src, packet):
         # log the update
         self.updateLog.append(packet)
@@ -57,7 +59,9 @@ class Router:
         if src not in self.routingTable:
             self.routingTable[src] = []
         self.routingTable[src].append(packet['msg'])
+        self.aggregate()
 
+    # Log the withdraw and revoke a entry(s) from the routing table, then disaggregate the table
     def withdraw(self, packet):
 
         def disaggregate(src):
@@ -79,8 +83,9 @@ class Router:
         self.withdrawLog.append(packet)
         src = packet['src']
         disaggregate(src)
-        self.announce(src, packet, False)
 
+    # Announce the update/revoke message to router's neighbor
+    # only announce a message if its from a customer or the destination is a customer
     def announce(self, src, packet, update):
         # compose a forwarding update message
         def composeForwardingMessage(dst):
@@ -106,6 +111,8 @@ class Router:
                     msg = composeForwardingMessage(host)
                     self.send(host, msg)
 
+    # Aggregate all possible entries on the routing table that are adjacent numerically, forward to
+    # the same next-hop router, and  have the same attributes
     def aggregate(self, target=None):
         def sameAttr(netOne, netTwo):
             return (netOne["localpref"] == netTwo["localpref"] 
@@ -152,6 +159,8 @@ class Router:
                 if traversed:
                     break
 
+    # Forward data per the routing table, only forward if the src or the dest is a customer
+    # if no available route, send the src a no route message
     def forwardData(self, src, packet):
         def matchPrefix(dst):
             matches = []
@@ -232,6 +241,7 @@ class Router:
             msg = composeNoRouteMessage()
         self.send(dst, msg)
 
+    # Dump all entries in the table, and send it back to the request source
     def dumpTable(self, src):
         def expandTable(table):
             expanded = []
@@ -258,6 +268,7 @@ class Router:
         msg = json.dumps(table)
         self.send(src, msg)
 
+    # Launch the router
     def run(self):
         while True:
             socks = select.select(self.sockets.values(), [], [], 0.1)[0]
@@ -277,15 +288,15 @@ class Router:
                 if msgType == 'update':
                     self.update(src, packet)
                     self.announce(src, packet, True)
-                    self.aggregate()
                 elif msgType == 'withdraw':
                     self.withdraw(packet)
+                    self.announce(src, packet, False)
                 elif msgType == 'data':
                     self.forwardData(src, packet)
                 elif msgType == 'dump':
                     self.dumpTable(src)
                 else:
-                    raise Exception("Invalid behavior!")
+                    raise Exception("Invalid packet!")
         return
 
 if __name__ == "__main__":
