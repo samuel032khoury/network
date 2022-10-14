@@ -22,11 +22,12 @@ class Router:
     ports = {}
     # the router's routing table
     routingTable = {}
-    # update logs
+    # list for update logs
     updateLog = []
-    # withdraw logs
+    # list for withdraw logs
     withdrawLog = []
 
+    # Initialize the router
     def __init__(self, asn, connections):
         print("Router at AS %s starting up" % asn)
         self.asn = asn
@@ -61,9 +62,9 @@ class Router:
         self.routingTable[src].append(packet['msg'])
         self.aggregate()
 
-    # Log the withdraw and revoke a entry(s) from the routing table, then disaggregate the table
+    # Log the withdraw and revoke an entry(s) from the routing table by disaggregating the table
     def withdraw(self, packet):
-
+        # Disaggregate the routing table by reproducing by the latest update logs and withdraw logs
         def disaggregate(src):
             srcUpdate = list(filter(lambda update: update['src'] == src, self.updateLog))
             srcUpdateMsg = list(map(lambda update:update['msg'], srcUpdate))
@@ -77,17 +78,18 @@ class Router:
                 srcUpdateMsg = ([msg for msg in srcUpdateMsg 
                                 if msg['network'] != wdNet or msg['netmask'] != wdMsk])
             self.routingTable[src] = srcUpdateMsg
+            # aggregate the table again so it's compact enough
             self.aggregate(target = src)
-
 
         self.withdrawLog.append(packet)
         src = packet['src']
         disaggregate(src)
 
-    # Announce the update/revoke message to router's neighbor
-    # only announce a message if its from a customer or the destination is a customer
+    # Announce the update/revoke message to the router's neighbor
+    # A message is announced only if it's from a customer or the destination is a customer
     def announce(self, src, packet, update):
-        # compose a forwarding update message
+        # Compose a forwarding message
+        # Message format and content can be different depending on the announce type (Update/Revoke)
         def composeForwardingMessage(dst):
             if update:
                 outUpdate = copy.deepcopy(packet['msg'])
@@ -104,7 +106,7 @@ class Router:
             }
             return json.dumps(outPacket)
         
-        # announce the updates to other networks
+        # announce the message to other neighbors
         for host in self.sockets.keys():
             if host != src:
                 if self.relations[host] == "cust" or self.relations[src] == "cust":
@@ -114,12 +116,13 @@ class Router:
     # Aggregate all possible entries on the routing table that are adjacent numerically, forward to
     # the same next-hop router, and  have the same attributes
     def aggregate(self, target=None):
+        # Determine if two networks have the same localpref, origin, selfOrigin, and ASPath
         def sameAttr(netOne, netTwo):
             return (netOne["localpref"] == netTwo["localpref"] 
                 and netOne["origin"] == netTwo["origin"] 
                 and netOne["selfOrigin"] == netTwo["selfOrigin"] 
                 and netOne["ASPath"] == netTwo["ASPath"])
-
+        # Determine if two networks are adjacent: have the same netmask and have same network prefix
         def adjacentNets(netOne, netTwo):
             if netOne['netmask'] != netTwo['netmask']:
                 return False
@@ -129,13 +132,18 @@ class Router:
             diffPos = netOneNwBin.rfind('1')
             return netOneNwBin[:diffPos] == netTwoNwBin[: diffPos]
 
-        iterTarget = [target] if target else self.routingTable.keys()
-        for currNeighbor in iterTarget:
-            maxMergeIter = len(self.routingTable[currNeighbor])
-            for mergeIter in range(maxMergeIter - 1):
-                currNetsList = self.routingTable[currNeighbor]
+        # if no specific aggregate target, aggregate the entire routing table
+        targetList = [target] if target else self.routingTable.keys()
+        for currNeighbor in targetList:
+            # at most merge n - 1 times, n as the total number of the routing entries for a neighbor
+            maxMergeCount = len(self.routingTable[currNeighbor]) - 1
+            for _ in range(maxMergeCount):
+                currRoutesList = self.routingTable[currNeighbor]
                 traversed = True
-                for (netOne, netTwo) in list(combinations(currNetsList, 2)):
+                # look into all possible combination of paired networks and see if any of them can
+                # be merged
+                for (netOne, netTwo) in list(combinations(currRoutesList, 2)):
+                    # two networks can be merged only if they have same attributes and adjacent
                     if (sameAttr(netOne, netTwo) and adjacentNets(netOne, netTwo)):
                         aggregatedNw = (netOne['network'] if netOne['network'] < netTwo['network']
                                    else netTwo['network'])
@@ -151,24 +159,28 @@ class Router:
                             "selfOrigin":netOne["selfOrigin"],
                             "ASPath":netOne["ASPath"]
                         }
-                        currNetsList.append(aggregatedRoute)
-                        currNetsList.remove(netOne)
-                        currNetsList.remove(netTwo)
+                        # add the merged route to current neighbor's route list, and remove old ones 
+                        currRoutesList.append(aggregatedRoute)
+                        currRoutesList.remove(netOne)
+                        currRoutesList.remove(netTwo)
                         traversed = False
                         break
+                # The entire list is traversed without entering in the merging branch implies
+                # everything has been merged. We thus break current nerighbor's merging iteration
                 if traversed:
                     break
 
-    # Forward data per the routing table, only forward if the src or the dest is a customer
-    # if no available route, send the src a no route message
+    # Forward the data per the routing table, only forward if the src or the dest is a customer
+    # A no-route message will be sent if there isn't a available route
     def forwardData(self, src, packet):
+        # Match the destination network prefix with all entries in the routing table
         def matchPrefix(dst):
             matches = []
-            for neighbor, nets in self.routingTable.items():
-                for net in nets:
+            for neighbor, routes in self.routingTable.items():
+                for route in routes:
                     dstBin = ipToBin(dst)
-                    networkBin = ipToBin(net['network'])
-                    netmaskBin = ipToBin(net['netmask'])
+                    networkBin = ipToBin(route['network'])
+                    netmaskBin = ipToBin(route['netmask'])
                     matchingLength = 0
                     for mask, expect, actual in zip(netmaskBin, networkBin, dstBin):
                         mask = int(mask)
@@ -180,11 +192,14 @@ class Router:
                             # Abort the match
                             break
                         else:
-                            matches.append((neighbor, matchingLength, net))
+                            matches.append((neighbor, matchingLength, route))
                             # Teminate the match
                             break
+            # The returned list consists of tuples of neighbor connection address, the length of 
+            # the matched prefix, and the route meta information
             return matches
         
+        # Find the best forwarding route
         def findBestRoute(matches):
             # to find the logest prefix match(es)
             longestMatchLength = max(list(map(lambda x: x[1], matches)))
@@ -217,6 +232,7 @@ class Router:
             # defult fall back to find the lowest nerighbor IP address
             return min(bestRoutes, key = lambda x: x[0])
 
+        # Compose a message that notifies the sender our router cannot route the message
         def composeNoRouteMessage():
             noRoutepacket = {
                 'src' : self.routerOf(src),
@@ -225,17 +241,21 @@ class Router:
                 "msg" : {}
             }
             return json.dumps(noRoutepacket)
-            
-
+        
+        # find all possible routes by matching the prefix of the destination of the message
         dst = packet['dst']
         matches = matchPrefix(dst)
 
+        # if no availabe route, send back a no-route message
         if not matches:
             dst = src
             msg = composeNoRouteMessage()
+        # otherwise find the best route and get the network address
         else:
             dst = findBestRoute(matches)[0]
             msg = json.dumps(packet)
+        # if neither the destination or the source is a customer, we stop fowarding the message,
+        # and send back a no-route message
         if (self.relations[dst] != 'cust' and self.relations[src] != 'cust'):
             dst = src
             msg = composeNoRouteMessage()
@@ -243,22 +263,25 @@ class Router:
 
     # Dump all entries in the table, and send it back to the request source
     def dumpTable(self, src):
-        def expandTable(table):
+        # Resturcture the routing table from one to one (list of routes) to one to many (routes)
+        def expandRoutingTable(routingTable):
             expanded = []
-            for peer, nets in table.items():
-                for net in nets:
-                    expanded.append((peer, net))
+            for neighbor, routes in routingTable.items():
+                for route in routes:
+                    expanded.append((neighbor, route))
+            # The returned list consists of pairs of neighbor connection address and
+            # the route information
             return expanded
 
-        data = list(map(lambda neighbor : {
-            "peer":neighbor[0],
-            "network":neighbor[1]["network"],
-            "netmask":neighbor[1]["netmask"],
-            "localpref":neighbor[1]["localpref"],
-            "origin":neighbor[1]["origin"],
-            "selfOrigin":neighbor[1]["selfOrigin"],
-            "ASPath":neighbor[1]["ASPath"],
-            },expandTable(self.routingTable)))
+        data = list(map(lambda entry : {
+            "peer":entry[0],
+            "network":entry[1]["network"],
+            "netmask":entry[1]["netmask"],
+            "localpref":entry[1]["localpref"],
+            "origin":entry[1]["origin"],
+            "selfOrigin":entry[1]["selfOrigin"],
+            "ASPath":entry[1]["ASPath"],
+            },expandRoutingTable(self.routingTable)))
         table = {
             "src": self.routerOf(src),
             "dst": src,
@@ -302,7 +325,8 @@ class Router:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='route packets')
     parser.add_argument('asn', type=int, help="AS number of this router")
-    parser.add_argument('connections', metavar='connections', type=str, nargs='+', help="connections")
+    parser.add_argument('connections', metavar='connections',
+     type=str, nargs='+', help="connections")
     args = parser.parse_args()
     router = Router(args.asn, args.connections)
     router.run()
