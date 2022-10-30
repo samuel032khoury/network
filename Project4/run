@@ -19,7 +19,7 @@ from functools import reduce
 from collections import defaultdict
 
 #### PARAMETERS
-os.system("cp 3700recv.python 3700recv")
+os.system("cp 3700recv.py 3700recv")
 os.system("cp 3700send.py 3700send")
 
 SENDER_EXECUTABLE_NAME = "3700send"
