@@ -11,15 +11,20 @@ class Receiver:
 
         self.remote_host = None
         self.remote_port = None
+        self.recv_msg_buff = dict()
+        self.recv_msg_hist = []
+        self.last_packet_time = None
 
     def send(self, message):
-        self.socket.sendto(json.dumps(message).encode('utf-8'), (self.remote_host, self.remote_port))
+        self.socket.sendto(json.dumps(message).encode('utf-8'),
+                         (self.remote_host, self.remote_port))
 
     def log(self, message):
         sys.stderr.write(message + "\n")
         sys.stderr.flush()
 
     def run(self):
+        self.last_packet_time = time.time()
         while True:
             socks = select.select([self.socket], [], [])[0]
             for conn in socks:
@@ -31,13 +36,24 @@ class Receiver:
                     self.remote_port = addr[1]
 
                 msg = json.loads(data.decode('utf-8'))
-                self.log("Received data message %s" % msg)
-
-                # Print out the data to stdout
-                print(msg["data"], end='', flush=True)
-
-                # Always send back an ack
-                self.send({ "type": "ack" })
+                if (msg["type"] == "msg" and msg["seq_num"] not in self.recv_msg_buff and
+                     msg["seq_num"] not in self.recv_msg_hist):
+                    self.log("Received data message %s" % msg)
+                    self.recv_msg_buff[msg["seq_num"]] = msg
+                    self.last_packet_time = time.time()
+            if (len(self.recv_msg_buff) == 4 
+                or self.last_packet_time + 0.5 < time.time() 
+                or msg["type"] == "fin"):
+                for _ in range(len(self.recv_msg_buff)):
+                    # pick up the packet with the smallest seq
+                    min_seq_num, msg = min(self.recv_msg_buff.items(), key=lambda d:d[0])
+                    data = msg["data"]
+                    # Print out the data to stdout
+                    print(data, end='', flush=True)
+                    # Always send back an ack
+                    self.send({ "type": "ack" , "ack_num": min_seq_num})
+                    self.recv_msg_buff.pop(min_seq_num)
+                    self.recv_msg_hist.append(min_seq_num)
 
 
         return

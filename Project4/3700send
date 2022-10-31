@@ -12,8 +12,8 @@ class Sender:
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind(('0.0.0.0', 0))
         self.waiting = False
-        self.sequenceNumber = 0
-        self.sentPackets = dict()
+        self.sender_seq_num = 0
+        self.sent_packets = dict()
 
     def log(self, message):
         sys.stderr.write(message + "\n")
@@ -29,29 +29,45 @@ class Sender:
             socks = select.select(sockets, [], [], 0.1)[0]
 
             for conn in socks:
+                # response from the recv
                 if conn == self.socket:
                     k, addr = conn.recvfrom(65535)
                     msg = k.decode('utf-8')
 
                     self.log("Received message '%s'" % msg)
-                    self.sentPackets.popitem()
-                    self.waiting = False
+                    msg = json.loads(msg)
+                    if msg["ack_num"] in self.sent_packets:
+                        self.sent_packets.pop(msg["ack_num"])
+                        self.waiting = False
                 elif conn == sys.stdin:
                     data = sys.stdin.read(DATA_SIZE)
                     if len(data) == 0:
+                        self.send({"type":"fin"})
+                        while(len(self.sent_packets) > 0):
+                            k, addr = self.socket.recvfrom(65535)
+                            msg = k.decode('utf-8')
+                            self.log("Received message AT END'%s'" % msg)
+                            msg = json.loads(msg)
+                            if msg["ack_num"] in self.sent_packets:
+                                self.sent_packets.pop(msg["ack_num"])
                         self.log("All done!")
                         sys.exit(0)
+                    
+                    if (self.sender_seq_num not in self.sent_packets):
+                        msg = { "type": "msg", "data": data , "seq_num": self.sender_seq_num}
+                        self.send(msg)
+                        self.log("Sending message '%s'" % msg)
+                        self.sent_packets[self.sender_seq_num] = {
+                            "msg":msg,
+                            "time":time.time()
+                        }
+                        self.sender_seq_num += len(msg["data"])
 
-                    msg = { "type": "msg", "data": data }
-                    self.send(msg)
-                    self.sentPackets[self.sequenceNumber] = msg
-                    self.log("Sending message '%s'" % msg)
-                    # whenever a message is sent out, appended it to a buffer (dictionary: key - (msg)> value)
-                    # 
-                    self.sentPackets[self.sequenceNumber] = msg
-                    self.sequenceNumber += len(msg["data"])
-                    if len(self.sentPackets) == 2:
+                    if len(self.sent_packets) == 4:
                         self.waiting = True
+            for sent_packet in self.sent_packets.values():
+                if(sent_packet["time"] + 1 < time.time()):
+                    self.send(sent_packet['msg'])
 
         return
 
