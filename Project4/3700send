@@ -24,6 +24,8 @@ class Sender:
 
     def run(self):
         def recv_json(conn):
+            self.log("WAITING ON SEND")
+            self.log("DEBUG" + str(self.sent_packets))
             k, addr = conn.recvfrom(65535)
             msg = k.decode('utf-8')
             self.log("Received message '%s'" % msg)
@@ -31,6 +33,7 @@ class Sender:
             return msg
 
         while True:
+
             sockets = [self.socket, sys.stdin] if not self.waiting else [self.socket]
 
             socks = select.select(sockets, [], [], 0.1)[0]
@@ -62,10 +65,10 @@ class Sender:
                         self.sender_seq_num += len(msg["data"])
                     if len(self.sent_packets) == 4:
                         self.waiting = True
-            for seq_num, sent_packet in [item for item in self.sent_packets.items()]:
-                if(sent_packet["time"] + 1 < time.time()):
-                    self.send(sent_packet['msg'])
-                    self.sent_packets[seq_num]["time"] = time.time()
+                for seq_num, sent_packet in [item for item in self.sent_packets.items()]:
+                    if(sent_packet["time"] + 1 < time.time()):
+                        self.send(sent_packet['msg'])
+                        self.sent_packets[seq_num]["time"] = time.time()
         return
 
 if __name__ == "__main__":
