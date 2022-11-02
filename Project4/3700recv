@@ -70,7 +70,8 @@ class Receiver:
                                 self.log("Reack data message %s" % msg)
                                 self.send(self.ack_log[msg_seq_num])
                     elif msg["type"] == "fin":
-                        self.ack_all()
+                        while (self.msg_buf):
+                            self.ack_all()
                     else:
                         self.log("[Error] Invalid Message Type!")
                         sys.exit(1)

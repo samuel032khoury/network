@@ -13,7 +13,7 @@ class Sender:
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind(('0.0.0.0', 0))
         self.waiting = False
-        self.adv_window = 5
+        self.adv_window = 3
         self.sender_seq_num = 0
         self.pending_pkts = dict()
         self.rtt = 0.6
