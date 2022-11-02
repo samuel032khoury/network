@@ -1,6 +1,7 @@
 #!/usr/bin/env -S python3 -u
 
-import argparse, socket, time, json, select, struct, sys, math, hashlib
+import argparse, socket, time, json, select, sys
+from hashlib import sha256
 
 DATA_SIZE = 1375
 
@@ -14,74 +15,79 @@ class Sender:
         self.waiting = False
         self.adv_window = 5
         self.sender_seq_num = 0
-        self.in_flight_packets = dict() # seqNum -> {data, time}
-        self.acked_packets = []
-        self.last_sending_time = time.time()
+        self.pending_pkts = dict()
+        self.rtt = 0.6
 
     def log(self, message):
         sys.stderr.write(message + "\n")
         sys.stderr.flush()
 
     def send(self, message):
-        self.socket.sendto(json.dumps(message).encode('utf-8'), (self.host, self.remote_port))
+        self.socket.sendto(json.dumps(message).encode(),
+                          (self.host, self.remote_port))
+
+    def recv_msg(self, conn):
+        packet, addr = conn.recvfrom(65535)
+        packet = packet.decode()
+        try:
+            msg = json.loads(packet)
+            self.log("Received message '%s'" % packet)
+            return msg
+        except ValueError:
+            self.log("Dropped corrupted message '%s'" % packet)
+            return None
+
 
     def run(self):
-        def recv_msg(conn):
-            k, addr = conn.recvfrom(65535)
-            packet = k.decode('utf-8')
-            try:
-                msg = json.loads(packet)
-                self.log("Received message '%s'" % packet)
-                return msg
-            except ValueError:
-                self.log("Received corrupted message '%s'" % packet)
-                return None
-
 
         while True:
-            sockets = [self.socket, sys.stdin] if not self.waiting else [self.socket]
+            sockets = ([self.socket, sys.stdin] if not self.waiting
+                  else [self.socket])
 
             socks = select.select(sockets, [], [], 0.1)[0]
 
             for conn in socks:
                 if conn == self.socket:
-                    msg = recv_msg(conn)
-                    if msg and msg["ack_num"] in self.in_flight_packets:
-                        self.in_flight_packets.pop(msg["ack_num"])
+                    msg = self.recv_msg(conn)
+                    if msg and msg["ack_num"] in self.pending_pkts:
+                        self.pending_pkts.pop(msg["ack_num"])
                         self.waiting = False
-                elif conn == sys.stdin:
+                if conn == sys.stdin:
                     data = sys.stdin.read(DATA_SIZE)
                     if len(data) == 0:
                         self.send({"type":"fin"})
                         while True:
-                            for (seq_num, sent_packet) in self.in_flight_packets.copy().items():
+                            for cur_pkt in self.pending_pkts.copy().values():
                                 self.log("Resending message '%s'" % msg)
-                                self.send(sent_packet['msg'])
-                                if (seq_num in self.in_flight_packets):
-                                    self.in_flight_packets[seq_num]["time"] = time.time()
-                                msg = recv_msg(self.socket)
-                                if msg and msg["ack_num"] in self.in_flight_packets:
-                                        self.in_flight_packets.pop(msg["ack_num"])
-                            if len(self.in_flight_packets) == 0:
+                                self.send(cur_pkt['msg'])
+                                msg = self.recv_msg(self.socket)
+                                if msg and msg["ack_num"] in self.pending_pkts:
+                                        self.pending_pkts.pop(msg["ack_num"])
+                            if not self.pending_pkts:
                                 break
                         self.log("All done!")
                         sys.exit(0)
-                    if (self.sender_seq_num not in self.in_flight_packets):
-                        msg = { "type": "msg", "data": data, "seq_num": self.sender_seq_num, "hash": hashlib.sha256(data.encode('utf-8')).hexdigest()}
-                        self.in_flight_packets[self.sender_seq_num] = {
+                    if (self.sender_seq_num not in self.pending_pkts):
+                        msg = {
+                            "type": "msg",
+                            "data": data,
+                            "seq_num": self.sender_seq_num,
+                            "hash": sha256(data.encode()).hexdigest()
+                         }
+                        self.pending_pkts[self.sender_seq_num] = {
                             "msg":msg,
                             "time": time.time()
                         }
                         self.log("Sending message '%s'" % msg)
                         self.send(msg)
                         self.sender_seq_num += len(msg["data"])
-                    if len(self.in_flight_packets) == self.adv_window:
+                    if len(self.pending_pkts) == self.adv_window:
                         self.waiting = True
-            for seq_num, sent_packet in [item for item in self.in_flight_packets.items()]:
-                if(sent_packet["time"] + 0.4 < time.time()):
+            for cur_seq, cur_pkt in self.pending_pkts.copy().items():
+                if(cur_pkt["time"] + self.rtt < time.time()):
                     self.log("Resending message '%s'" % msg)
-                    self.send(sent_packet['msg'])
-                    self.in_flight_packets[seq_num]["time"] = time.time()
+                    self.send(cur_pkt['msg'])
+                    self.pending_pkts[cur_seq]["time"] = time.time()
         return
 
 if __name__ == "__main__":

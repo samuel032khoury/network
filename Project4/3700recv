@@ -1,6 +1,7 @@
 #!/usr/bin/env -S python3 -u
 
-import argparse, socket, time, json, select, struct, sys, math, hashlib
+import argparse, socket, time, json, select, sys
+from hashlib import sha256
 
 class Receiver:
     def __init__(self):
@@ -11,12 +12,13 @@ class Receiver:
 
         self.remote_host = None
         self.remote_port = None
-        self.recv_seq_num = 0
-        self.recv_msg_buff = dict()
-        self.ack_msg_hist = dict()
+        self.ack_num = 0
+        self.ack_log = dict()
+        self.msg_buf = dict()
 
     def send(self, message):
-        self.socket.sendto(json.dumps(message).encode('utf-8'), (self.remote_host, self.remote_port))
+        self.socket.sendto(json.dumps(message).encode(),
+                          (self.remote_host, self.remote_port))
 
     def log(self, message):
         sys.stderr.write(message + "\n")
@@ -27,16 +29,16 @@ class Receiver:
         print(data, end='', flush=True)
         ack_packet = {"type": "ack" , "ack_num": msg["seq_num"]}
         self.send(ack_packet)
-        self.recv_seq_num += len(msg['data'])
-        self.ack_msg_hist[msg["seq_num"]] = ack_packet
+        self.ack_num += len(msg['data'])
+        self.ack_log[msg["seq_num"]] = ack_packet
 
     def ack_all(self):
-        for _ in range(len(self.recv_msg_buff)):
-            min_seq_num, msg = min(self.recv_msg_buff.items(), key=lambda d:d[0])
-            if min_seq_num != self.recv_seq_num:
+        for _ in range(len(self.msg_buf)):
+            min_seq_num, msg = min(self.msg_buf.items(), key=lambda d:d[0])
+            if min_seq_num != self.ack_num:
                 return
             self.ack_msg(msg)
-            self.recv_msg_buff.pop(min_seq_num)
+            self.msg_buf.pop(min_seq_num)
 
     def run(self):
         while True:
@@ -50,33 +52,31 @@ class Receiver:
                     self.remote_port = addr[1]
 
                 try:
-                    msg = json.loads(packet.decode('utf-8'))
+                    msg = json.loads(packet.decode())
                     
                     if (msg["type"] == "msg"):
                         msg_seq_num = msg["seq_num"]
-                        data_hash = hashlib.sha256(msg["data"].encode('utf-8')).hexdigest()
+                        data_hash = sha256(msg["data"].encode()).hexdigest()
                         if data_hash != msg["hash"]:
                             raise ValueError
-                        if(msg_seq_num == self.recv_seq_num):
+                        if(msg_seq_num == self.ack_num):
                             self.log("Received data message %s" % msg)
                             self.ack_msg(msg)
-                        elif (msg_seq_num not in self.recv_msg_buff):
-                            if (msg_seq_num not in self.ack_msg_hist):
+                        elif (msg_seq_num not in self.msg_buf):
+                            if (msg_seq_num not in self.ack_log):
                                 self.log("Buffered data message %s" % msg)
-                                self.recv_msg_buff[msg_seq_num] = msg
+                                self.msg_buf[msg_seq_num] = msg
                             else:
                                 self.log("Reack data message %s" % msg)
-                                self.send(self.ack_msg_hist[msg_seq_num])
+                                self.send(self.ack_log[msg_seq_num])
                     elif msg["type"] == "fin":
                         self.ack_all()
                     else:
-                        self.log("Error-Invalid Message Type!")
+                        self.log("[Error] Invalid Message Type!")
                         sys.exit(1)
                 except (ValueError, KeyError) as err:
-                    self.log("Recieved corrupted data message %s" % msg)
+                    self.log("Dropped corrupted message %s" % msg)
             self.ack_all()
-
-
 
         return
 
