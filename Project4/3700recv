@@ -1,6 +1,6 @@
 #!/usr/bin/env -S python3 -u
 
-import argparse, socket, time, json, select, struct, sys, math
+import argparse, socket, time, json, select, struct, sys, math, hashlib
 
 class Receiver:
     def __init__(self):
@@ -42,7 +42,6 @@ class Receiver:
         while True:
             socks = select.select([self.socket], [], [])[0]
             for conn in socks:
-                self.log("WAIT ON RECV")
                 packet, addr = conn.recvfrom(65535)
 
                 # Grab the remote host/port if we don't alreadt have it
@@ -50,26 +49,31 @@ class Receiver:
                     self.remote_host = addr[0]
                     self.remote_port = addr[1]
 
-                msg = json.loads(packet.decode('utf-8'))
-                
-                if (msg["type"] == "msg"):
-                    msg_seq_num = msg["seq_num"]
-                    if(msg_seq_num == self.recv_seq_num):
-                        self.log("Received data message %s" % msg)
-                        self.ack_msg(msg)
-                    elif (msg_seq_num not in self.recv_msg_buff):
-                        if (msg_seq_num not in self.ack_msg_hist):
-                            self.log("Buffered data message %s" % msg)
-                            # Always send back an ack
-                            self.recv_msg_buff[msg_seq_num] = msg
-                        else:
-                            self.log("Reack data message %s" % msg)
-                            self.send(self.ack_msg_hist[msg_seq_num])
-                elif msg["type"] == "fin":
-                    self.ack_all()
-                else:
-                    self.log("Error-Invalid Message Type!")
-                    sys.exit(1)
+                try:
+                    msg = json.loads(packet.decode('utf-8'))
+                    
+                    if (msg["type"] == "msg"):
+                        msg_seq_num = msg["seq_num"]
+                        data_hash = hashlib.sha256(msg["data"].encode('utf-8')).hexdigest()
+                        if data_hash != msg["hash"]:
+                            raise ValueError
+                        if(msg_seq_num == self.recv_seq_num):
+                            self.log("Received data message %s" % msg)
+                            self.ack_msg(msg)
+                        elif (msg_seq_num not in self.recv_msg_buff):
+                            if (msg_seq_num not in self.ack_msg_hist):
+                                self.log("Buffered data message %s" % msg)
+                                self.recv_msg_buff[msg_seq_num] = msg
+                            else:
+                                self.log("Reack data message %s" % msg)
+                                self.send(self.ack_msg_hist[msg_seq_num])
+                    elif msg["type"] == "fin":
+                        self.ack_all()
+                    else:
+                        self.log("Error-Invalid Message Type!")
+                        sys.exit(1)
+                except (ValueError, KeyError) as err:
+                    self.log("Recieved corrupted data message %s" % msg)
             self.ack_all()
 
 
