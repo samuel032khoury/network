@@ -13,10 +13,10 @@ class Sender:
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind(('0.0.0.0', 0))
         self.waiting = False
-        self.adv_window = 3
-        self.sender_seq_num = 0
+        self.cwnd = 2
+        self.seq_num = 0
         self.pending_pkts = dict()
-        self.rtt = 0.6
+        self.rtt = 0.5
 
     def log(self, message):
         sys.stderr.write(message + "\n")
@@ -26,13 +26,22 @@ class Sender:
         self.socket.sendto(json.dumps(message).encode(),
                           (self.host, self.remote_port))
 
-    def recv_msg(self, conn):
+    def recv_ack(self, conn):
         packet, addr = conn.recvfrom(65535)
         packet = packet.decode()
         try:
-            msg = json.loads(packet)
-            self.log("Received message '%s'" % packet)
-            return msg
+            ack = json.loads(packet)
+            if ack["ack_num"] in self.pending_pkts:
+                self.log("Received ACK '%s'" % packet)
+                new_rtt = time.time() - self.pending_pkts[ack["ack_num"]]["time"]
+                self.log("DEBUG2 " + str(new_rtt))
+                self.rtt = (1 - 0.2) * self.rtt + 0.2 * new_rtt
+                self.cwnd += 1
+                self.log("DEBUG " + str(self.rtt))
+                return ack
+            else:
+                self.log("Received duplicated ACK '%s'" % packet)
+                return None
         except ValueError:
             self.log("Dropped corrupted message '%s'" % packet)
             return None
@@ -41,6 +50,7 @@ class Sender:
     def run(self):
 
         while True:
+
             sockets = ([self.socket, sys.stdin] if not self.waiting
                   else [self.socket])
 
@@ -48,9 +58,15 @@ class Sender:
 
             for conn in socks:
                 if conn == self.socket:
-                    msg = self.recv_msg(conn)
-                    if msg and msg["ack_num"] in self.pending_pkts:
-                        self.pending_pkts.pop(msg["ack_num"])
+                    for cur_seq, cur_pkt in self.pending_pkts.copy().items():
+                        if(cur_pkt["time"] + 2 * self.rtt < time.time()):
+                            self.log("Resending message '%s'" % cur_pkt['msg'])
+                            self.send(cur_pkt['msg'])
+                            self.cwnd /= 2
+                            self.pending_pkts[cur_seq]["time"] = time.time()
+                    ack = self.recv_ack(conn)
+                    if ack and ack["ack_num"] in self.pending_pkts:
+                        self.pending_pkts.pop(ack["ack_num"])
                         self.waiting = False
                 if conn == sys.stdin:
                     data = sys.stdin.read(DATA_SIZE)
@@ -58,36 +74,38 @@ class Sender:
                         self.send({"type":"fin"})
                         while True:
                             for cur_pkt in self.pending_pkts.copy().values():
-                                self.log("Resending message '%s'" % msg)
+                                self.log("Resending message '%s'" % cur_pkt['msg'])
                                 self.send(cur_pkt['msg'])
-                                msg = self.recv_msg(self.socket)
-                                if msg and msg["ack_num"] in self.pending_pkts:
-                                        self.pending_pkts.pop(msg["ack_num"])
+                                ack = self.recv_ack(self.socket)
+                                if ack and ack["ack_num"] in self.pending_pkts:
+                                        self.pending_pkts.pop(ack["ack_num"])
                             if not self.pending_pkts:
                                 break
                         self.log("All done!")
                         sys.exit(0)
-                    if (self.sender_seq_num not in self.pending_pkts):
+                    if (self.seq_num not in self.pending_pkts):
                         msg = {
                             "type": "msg",
                             "data": data,
-                            "seq_num": self.sender_seq_num,
+                            "seq_num": self.seq_num,
                             "hash": sha256(data.encode()).hexdigest()
                          }
-                        self.pending_pkts[self.sender_seq_num] = {
+                        self.pending_pkts[self.seq_num] = {
                             "msg":msg,
                             "time": time.time()
                         }
                         self.log("Sending message '%s'" % msg)
                         self.send(msg)
-                        self.sender_seq_num += len(msg["data"])
-                    if len(self.pending_pkts) == self.adv_window:
+                        self.seq_num += len(msg["data"])
+                    if len(self.pending_pkts) == self.cwnd:
                         self.waiting = True
             for cur_seq, cur_pkt in self.pending_pkts.copy().items():
-                if(cur_pkt["time"] + self.rtt < time.time()):
-                    self.log("Resending message '%s'" % msg)
+                if(cur_pkt["time"] + 2 * self.rtt < time.time()):
+                    self.log("Resending message '%s'" % cur_pkt['msg'])
                     self.send(cur_pkt['msg'])
+                    self.cwnd /= 2
                     self.pending_pkts[cur_seq]["time"] = time.time()
+            
         return
 
 if __name__ == "__main__":
