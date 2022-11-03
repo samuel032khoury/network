@@ -43,7 +43,7 @@ class Sender:
                     # create a packet and send it
                     if data:
                         self.send_packet(data)
-                    # if there are no more packets to send, exit the program gracefully
+                    # if no more data to send and the buffer has been cleared (all teh sent packets has been acked), exit the program gracefully
                     elif not self.pkt_buff:
                         self.log("All done!")
                         sys.exit(0) 
@@ -52,6 +52,8 @@ class Sender:
             timeout_pkts = dict()
             # stores packets that have not been acked and are not timed-out 
             pending_pkts = dict()
+            # for every packet in the buffer add it to timeout if it's timeout, add it to pending 
+            # if it's not timeout
             for packet in self.pkt_buff.values():
                 pkt_seq = packet["msg"]["seq_num"]
                 if time.time() - packet["time"] > (2 * self.rtt):
