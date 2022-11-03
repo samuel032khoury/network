@@ -13,11 +13,11 @@ class Sender:
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind(('0.0.0.0', 0))
         self.waiting = False
-        
+
         self.rtt = 0.5 # initial RTT
         self.cwnd = 2 # initial size of congestion window
         self.seq_num = 0
-        self.pkt_buf = dict()
+        self.pkt_buff = dict()
 
     # logs messages to the console
     def log(self, message):
@@ -52,7 +52,7 @@ class Sender:
                         }
 
                         self.send(message)
-                        self.pkt_buf[self.seq_num] = {
+                        self.pkt_buff[self.seq_num] = {
                             "msg":message,
                             "time": time.time() # the time at which the packet is sent
                         }
@@ -60,7 +60,7 @@ class Sender:
                         self.seq_num += DATA_SIZE # incrementing the sequence number for the next packet
 
                     # if there are no more packets to send, exit the program gracefully
-                    elif not self.pkt_buf:
+                    elif not self.pkt_buff:
                         self.log("All done!")
                         sys.exit(0) 
 
@@ -69,7 +69,7 @@ class Sender:
             timeout_pkts = []
             # stores packets that have not been acked and are not timed-out 
             pending_pkts = []
-            for packet in self.pkt_buf.values():
+            for packet in self.pkt_buff.values():
                 (timeout_pkts if time.time() - packet["time"] > (2 * self.rtt) else pending_pkts).append(packet)
 
 
@@ -84,7 +84,7 @@ class Sender:
             if timeout_pkt and len(pending_pkts) < self.cwnd:
                 self.log("Resending packet '%s'" % timeout_pkt)
                 self.send(timeout_pkt)
-                self.pkt_buf[timeout_pkt["seq_num"]]["time"] = time.time()
+                self.pkt_buff[timeout_pkt["seq_num"]]["time"] = time.time()
                 self.cwnd/=2 # shrinking the window since the network is congested
 
     # receives packets (ACKS) from the receiver
@@ -98,11 +98,11 @@ class Sender:
                 self.log("Received ACK packet '%s'" % packet)
 
                 # calculate the new RTT based on the time of the most recent ACK
-                if message["ack_num"] in self.pkt_buf:
-                    new_rtt = time.time() - self.pkt_buf[message["ack_num"]]["time"]
+                if message["ack_num"] in self.pkt_buff:
+                    new_rtt = time.time() - self.pkt_buff[message["ack_num"]]["time"]
                     self.rtt = 0.8 * self.rtt + 0.2 * new_rtt
                     self.cwnd += 1 # increase the window size since the network is not congested
-                    self.pkt_buf.pop(message["ack_num"])
+                    self.pkt_buff.pop(message["ack_num"])
                 else:
                     self.log("Received duplicate ACK packet '%s'" % packet)
             else:
