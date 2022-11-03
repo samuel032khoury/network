@@ -52,8 +52,8 @@ class Sender:
             timeout_pkts = dict()
             # stores packets that have not been acked and are not timed-out 
             pending_pkts = dict()
-            # for every packet in the buffer add it to timeout if it's timeout, add it to pending 
-            # if it's not timeout
+            # for every packet in the buffer add it to timeout_pkts if it's timed-out, 
+            # otherwise add it to pending_pkts if it's not timed-out
             for packet in self.pkt_buff.values():
                 pkt_seq = packet["msg"]["seq_num"]
                 if time.time() - packet["time"] > (2 * self.rtt):
