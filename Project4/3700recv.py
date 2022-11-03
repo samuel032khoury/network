@@ -13,9 +13,11 @@ class Receiver:
         self.remote_port = None
 
         self.ack_num = 0 # corresponds to the sequence number of the received packet
-        self.msg_buff = {}
-        self.msg_hist = []
+        self.msg_buff = {} # messages that need to be ACKed
+        self.msg_hist = [] # messages that have already been ACKed
 
+
+    # sends packets (ACKs) to the sender
     def send(self, message):
         self.socket.sendto(json.dumps(message).encode(), (self.remote_host, self.remote_port))
 
@@ -23,11 +25,11 @@ class Receiver:
         sys.stderr.write(message + "\n")
         sys.stderr.flush()
 
+    # receives packets from the sender and sends ACKs
     def run(self):
         while True:
             socks = select.select([self.socket], [], [])[0]
             for conn in socks:
-                ## REFACTOR
                 msg = self.recv_packet(conn)
                 if not msg:
                     continue
@@ -36,6 +38,7 @@ class Receiver:
                 if msg["seq_num"] in self.msg_buff:
                     self.send({ "type": "ack", "ack_num": msg["seq_num"]})
 
+                # add the message to the buffer to send an ACK
                 elif msg["seq_num"] not in self.msg_hist:
                     self.log("Received packet '%s'" % msg)
                     self.msg_buff[msg["seq_num"]] = msg
@@ -46,7 +49,7 @@ class Receiver:
                         print(self.msg_buff[seq_num]["data"], end='', flush=True)
                         self.ack_num += len(self.msg_buff[seq_num]["data"]) # incrementing the ack number for the next packet
                         self.msg_buff.pop(seq_num) 
-                        self.msg_hist.append(seq_num)
+                        self.msg_hist.append(seq_num) # since the ACK has been sent, remove the message from the buffer and add it to the message history
                     else:
                         break
 
@@ -54,7 +57,8 @@ class Receiver:
                 self.send({ "type": "ack", "ack_num": msg["seq_num"]})
 
         return
-    
+        
+    # receive packets from the sender
     def recv_packet(self, conn):
         packet, addr = conn.recvfrom(65535)
         packet = packet.decode()
