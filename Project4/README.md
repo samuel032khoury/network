@@ -14,6 +14,8 @@ The program receives a  configuration file from the command line, and the progra
 
 The receiver, on ensuring that a packet is received correctly and in order, then sends an acknowledgement message to the sender signifying that the packet with the given sequence number was received correctly.
 
+Packet corruption is detected both at the sender and receiver by trying to load the packet as a JSON object. If this results in an error, we assume that the packet was corrupted in transmit. On the sender side, we add an extra layer to ensure that the packet data isn't corrupted when received by adding the hash of the data as a property in the packet. On the receiver's end, this hash is compared to the actual data in the packet, and if the data does not match the hash, we assume the packet is corrupted and drop it.
+
 If the sender does not receive an ACK for a packet within a given amount of time (signified by the dynamic RTT), it assumes that the packet was either dropped or corrupted and attempts to retransmit it until it is received successfully.
 
 The sender also dynamically adjusts the RTT and the window size to send packets which avoids congestion and makes the program more efficient.
