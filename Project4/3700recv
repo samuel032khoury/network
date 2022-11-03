@@ -34,9 +34,9 @@ class Receiver:
                     self.remote_host = addr[0]
                     self.remote_port = addr[1]
 
-                packet = packet.decode()
 
                 try:
+                    packet = packet.decode()
                     msg = json.loads(packet)
                     if sha256(msg["data"].encode()).hexdigest() != msg["hash"]:
                         raise ValueError
@@ -55,9 +55,9 @@ class Receiver:
                     if seq_num == self.ack_num:
                         print(self.msg_buff[seq_num]["data"], end='', flush=True)
                         self.ack_num += len(self.msg_buff[seq_num]["data"])
-                        self.msg_hist.append(seq_num)
                         self.msg_buff.pop(seq_num)
-                    elif (seq_num > self.ack_num):
+                        self.msg_hist.append(seq_num)
+                    else:
                         break
 
                 # Always send back an ack

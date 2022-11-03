@@ -30,7 +30,7 @@ class Sender:
     def run(self):
         while True:
 
-            sockets = [self.socket, sys.stdin] if self.waiting else [self.socket]
+            sockets = [self.socket, sys.stdin] if not self.waiting else [self.socket]
 
             socks = select.select(sockets, [], [], 0.1)[0]
             for conn in socks:
@@ -39,12 +39,7 @@ class Sender:
                 elif conn == sys.stdin:
                     data = sys.stdin.read(DATA_SIZE)
         
-                    if len(data) == 0 and not self.pending_pkts:
-                        self.log("All done!")
-                        sys.exit(0) 
-                    elif len(data) == 0:
-                        continue
-                    else:
+                    if data:
                         self.log("Sending message '%s'" % data)
                         message = { 
                             "type": "msg",
@@ -58,20 +53,21 @@ class Sender:
                             "time": time.time()
                         }
                         self.seq_num += DATA_SIZE
+                    elif not self.pending_pkts:
+                        self.log("All done!")
+                        sys.exit(0) 
 
-            timeout_pkts = filter(lambda item: time.time() - item[1]["time"] > 2*self.rtt, self.pending_pkts.items())
-            timeout_pkts = map(lambda item: self.pending_pkts[item[0]]['msg'], timeout_pkts)
-            timeout_pkts = list(timeout_pkts)
-            flying_pkts = list(filter(lambda packet: (time.time() - packet["time"]) < 2*self.rtt, self.pending_pkts.values()))
-            self.waiting = (not timeout_pkts) and len(flying_pkts) < self.cwnd
-            
-            timeout_packet = None if not timeout_pkts else min(timeout_pkts, key=lambda x: x["seq_num"])
+            timeout_pkts, flying_pkts = [], []
+            for packet in self.pending_pkts.values():
+                (timeout_pkts if time.time() - packet["time"] > 2*self.rtt else flying_pkts).append(packet)
+            timeout_pkt = None if not timeout_pkts else min(timeout_pkts, key=lambda x: x["msg"]["seq_num"])["msg"]
+            self.waiting =  timeout_pkts or len(flying_pkts) >= self.cwnd
 
-            if timeout_packet and len(flying_pkts) < self.cwnd:
-                self.log("Resending packet '%s'" % timeout_packet)
-                self.send(timeout_packet)
-                self.pending_pkts[timeout_packet["seq_num"]]['msg'] = timeout_packet
-                self.pending_pkts[timeout_packet["seq_num"]]["time"] = time.time()
+            if timeout_pkt and len(flying_pkts) < self.cwnd:
+                self.log("Resending packet '%s'" % timeout_pkt)
+                self.send(timeout_pkt)
+                self.pending_pkts[timeout_pkt["seq_num"]]['msg'] = timeout_pkt
+                self.pending_pkts[timeout_pkt["seq_num"]]["time"] = time.time()
                 self.cwnd/=2
 
     def receive_packet(self, conn):
