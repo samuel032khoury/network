@@ -1,7 +1,7 @@
 #!/usr/bin/env -S python3 -u
-
-import argparse, socket, time, json, select, sys
 from hashlib import sha256
+import argparse, socket, time, json, select, struct, sys, math
+from typing import Any, Dict
 
 DATA_SIZE = 1375
 
@@ -15,100 +15,90 @@ class Sender:
         self.waiting = False
         self.cwnd = 2
         self.seq_num = 0
-        self.pending_pkts = dict()
         self.rtt = 0.5
+
+        self.pending_pkts = dict()
+
 
     def log(self, message):
         sys.stderr.write(message + "\n")
         sys.stderr.flush()
 
     def send(self, message):
-        self.socket.sendto(json.dumps(message).encode(),
-                          (self.host, self.remote_port))
-
-    def recv_ack(self, conn):
-        packet, addr = conn.recvfrom(65535)
-        packet = packet.decode()
-        try:
-            ack = json.loads(packet)
-            if ack["ack_num"] in self.pending_pkts:
-                self.log("Received ACK '%s'" % packet)
-                new_rtt = time.time() - self.pending_pkts[ack["ack_num"]]["time"]
-                self.log("DEBUG2 " + str(new_rtt))
-                self.rtt = (1 - 0.2) * self.rtt + 0.2 * new_rtt
-                self.cwnd += 1
-                self.log("DEBUG " + str(self.rtt))
-                return ack
-            else:
-                self.log("Received duplicated ACK '%s'" % packet)
-                return None
-        except ValueError:
-            self.log("Dropped corrupted message '%s'" % packet)
-            return None
-
+        self.socket.sendto(json.dumps(message).encode('utf-8'), (self.host, self.remote_port))
 
     def run(self):
-
         while True:
 
-            sockets = ([self.socket, sys.stdin] if not self.waiting
-                  else [self.socket])
+            sockets = [self.socket, sys.stdin] if self.waiting else [self.socket]
 
             socks = select.select(sockets, [], [], 0.1)[0]
-
             for conn in socks:
                 if conn == self.socket:
-                    for cur_seq, cur_pkt in self.pending_pkts.copy().items():
-                        if(cur_pkt["time"] + 2 * self.rtt < time.time()):
-                            self.log("Resending message '%s'" % cur_pkt['msg'])
-                            self.send(cur_pkt['msg'])
-                            self.cwnd /= 2
-                            self.pending_pkts[cur_seq]["time"] = time.time()
-                    ack = self.recv_ack(conn)
-                    if ack and ack["ack_num"] in self.pending_pkts:
-                        self.pending_pkts.pop(ack["ack_num"])
-                        self.waiting = False
-                if conn == sys.stdin:
+                    self.receive_packet(conn)
+                elif conn == sys.stdin:
                     data = sys.stdin.read(DATA_SIZE)
-                    if len(data) == 0:
-                        self.send({"type":"fin"})
-                        while True:
-                            for cur_pkt in self.pending_pkts.copy().values():
-                                self.log("Resending message '%s'" % cur_pkt['msg'])
-                                self.send(cur_pkt['msg'])
-                                ack = self.recv_ack(self.socket)
-                                if ack and ack["ack_num"] in self.pending_pkts:
-                                        self.pending_pkts.pop(ack["ack_num"])
-                            if not self.pending_pkts:
-                                break
+        
+                    if len(data) == 0 and not self.pending_pkts:
                         self.log("All done!")
-                        sys.exit(0)
-                    if (self.seq_num not in self.pending_pkts):
-                        msg = {
+                        sys.exit(0) 
+                    elif len(data) == 0:
+                        continue
+                    else:
+                        self.log("Sending message '%s'" % data)
+                        message = { 
                             "type": "msg",
-                            "data": data,
                             "seq_num": self.seq_num,
-                            "hash": sha256(data.encode()).hexdigest()
-                         }
+                            "data": data,
+                            "hash": sha256(data.encode('utf-8')).hexdigest()
+                        }
+                        self.send(message)
                         self.pending_pkts[self.seq_num] = {
-                            "msg":msg,
+                            "msg":message,
                             "time": time.time()
                         }
-                        self.log("Sending message '%s'" % msg)
-                        self.send(msg)
-                        self.seq_num += len(msg["data"])
-                    if len(self.pending_pkts) == self.cwnd:
-                        self.waiting = True
-            for cur_seq, cur_pkt in self.pending_pkts.copy().items():
-                if(cur_pkt["time"] + 2 * self.rtt < time.time()):
-                    self.log("Resending message '%s'" % cur_pkt['msg'])
-                    self.send(cur_pkt['msg'])
-                    self.recv_ack()
-                    self.cwnd /= 2
-                    self.pending_pkts[cur_seq]["time"] = time.time()
-            
-        return
+                        self.seq_num += DATA_SIZE
 
+            timeout_pkts = filter(lambda item: time.time() - item[1]["time"] > 2*self.rtt, self.pending_pkts.items())
+            timeout_pkts = map(lambda item: self.pending_pkts[item[0]]['msg'], timeout_pkts)
+            timeout_pkts = list(timeout_pkts)
+            flying_pkts = list(filter(lambda packet: (time.time() - packet["time"]) < 2*self.rtt, self.pending_pkts.values()))
+            self.waiting = (not timeout_pkts) and len(flying_pkts) < self.cwnd
+            
+            timeout_packet = None if not timeout_pkts else min(timeout_pkts, key=lambda x: x["seq_num"])
+
+            if timeout_packet and len(flying_pkts) < self.cwnd:
+                self.log("Resending packet '%s'" % timeout_packet)
+                self.send(timeout_packet)
+                self.pending_pkts[timeout_packet["seq_num"]]['msg'] = timeout_packet
+                self.pending_pkts[timeout_packet["seq_num"]]["time"] = time.time()
+                self.cwnd/=2
+
+    def receive_packet(self, conn):
+        packet, addr = conn.recvfrom(65535)
+        packet = packet.decode('utf-8')
+
+        try:
+            message = json.loads(packet)
+            if message["type"] == "ack":
+                self.log("Received ACK packet '%s'" % packet)
+
+                if message["ack_num"] in self.pending_pkts:
+                    new_rtt = time.time() - self.pending_pkts[message["ack_num"]]["time"]
+                    self.rtt = 0.8 * self.rtt + 0.2 * new_rtt
+
+                    self.pending_pkts.pop(message["ack_num"])
+
+                    self.cwnd += 1
+                else:
+                    self.log("Received duplicate ACK packet '%s'" % packet)
+            else:
+                raise Exception("Unknown packet type")
+        except (ValueError, KeyError) as err:
+            self.log("Dropped corrupted packet '%s'" % packet)
+
+
+  
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='send data')
     parser.add_argument('host', type=str, help="Remote host to connect to")
