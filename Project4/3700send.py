@@ -13,10 +13,11 @@ class Sender:
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind(('0.0.0.0', 0))
         self.waiting = False
+        
+        self.rtt = 0.5 # initial RTT
         self.cwnd = 2 # initial size of congestion window
         self.seq_num = 0
-        self.rtt = 0.5 # initial RTT
-        self.pending_pkts = dict()
+        self.pkt_buf = dict()
 
     # logs messages to the console
     def log(self, message):
@@ -51,7 +52,7 @@ class Sender:
                         }
 
                         self.send(message)
-                        self.pending_pkts[self.seq_num] = {
+                        self.pkt_buf[self.seq_num] = {
                             "msg":message,
                             "time": time.time() # the time at which the packet is sent
                         }
@@ -59,7 +60,7 @@ class Sender:
                         self.seq_num += DATA_SIZE # incrementing the sequence number for the next packet
 
                     # if there are no more packets to send, exit the program gracefully
-                    elif not self.pending_pkts:
+                    elif not self.pkt_buf:
                         self.log("All done!")
                         sys.exit(0) 
 
@@ -67,23 +68,23 @@ class Sender:
             # stores packets that have not been acked and are timed-out to retransmit them
             timeout_pkts = []
             # stores packets that have not been acked and are not timed-out 
-            flying_pkts = []
-            for packet in self.pending_pkts.values():
-                (timeout_pkts if time.time() - packet["time"] > (2 * self.rtt) else flying_pkts).append(packet)
+            pending_pkts = []
+            for packet in self.pkt_buf.values():
+                (timeout_pkts if time.time() - packet["time"] > (2 * self.rtt) else pending_pkts).append(packet)
 
 
             # if there are timed-out packets, find the one with the lowest sequence number to retransmit in order
             timeout_pkt = None if not timeout_pkts else min(timeout_pkts, key=lambda x: x["msg"]["seq_num"])["msg"]
             # flip self.waiting if there are timed-out packets or the packets currently in 
             # transmission exceed the size of the congestion window
-            self.waiting =  timeout_pkts or len(flying_pkts) >= self.cwnd
+            self.waiting =  timeout_pkts or len(pending_pkts) >= self.cwnd
 
             # checks if a packet can be retransmitted provided that the window has not reached its
             # threshold with the packets currently in transmission (not timed-out)
-            if timeout_pkt and len(flying_pkts) < self.cwnd:
+            if timeout_pkt and len(pending_pkts) < self.cwnd:
                 self.log("Resending packet '%s'" % timeout_pkt)
                 self.send(timeout_pkt)
-                self.pending_pkts[timeout_pkt["seq_num"]]["time"] = time.time()
+                self.pkt_buf[timeout_pkt["seq_num"]]["time"] = time.time()
                 self.cwnd/=2 # shrinking the window since the network is congested
 
     # receives packets (ACKS) from the receiver
@@ -97,11 +98,11 @@ class Sender:
                 self.log("Received ACK packet '%s'" % packet)
 
                 # calculate the new RTT based on the time of the most recent ACK
-                if message["ack_num"] in self.pending_pkts:
-                    new_rtt = time.time() - self.pending_pkts[message["ack_num"]]["time"]
+                if message["ack_num"] in self.pkt_buf:
+                    new_rtt = time.time() - self.pkt_buf[message["ack_num"]]["time"]
                     self.rtt = 0.8 * self.rtt + 0.2 * new_rtt
                     self.cwnd += 1 # increase the window size since the network is not congested
-                    self.pending_pkts.pop(message["ack_num"])
+                    self.pkt_buf.pop(message["ack_num"])
                 else:
                     self.log("Received duplicate ACK packet '%s'" % packet)
             else:
