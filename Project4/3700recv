@@ -28,15 +28,15 @@ class Receiver:
         while True:
             socks = select.select([self.socket], [], [])[0]
             for conn in socks:
+                ## REFACTOR
                 packet, addr = conn.recvfrom(65535)
+                packet = packet.decode()
 
                 if self.remote_host is None:
                     self.remote_host = addr[0]
                     self.remote_port = addr[1]
 
-
                 try:
-                    packet = packet.decode()
                     msg = json.loads(packet)
                     if sha256(msg["data"].encode()).hexdigest() != msg["hash"]:
                         raise ValueError
@@ -45,10 +45,9 @@ class Receiver:
                     continue
                 if msg["seq_num"] in self.msg_buff:
                     self.send({ "type": "ack", "ack_num": msg["seq_num"]})
-                    continue
 
-                self.log("Received packet '%s'" % msg)
-                if msg["seq_num"] not in self.msg_hist:
+                elif msg["seq_num"] not in self.msg_hist:
+                    self.log("Received packet '%s'" % msg)
                     self.msg_buff[msg["seq_num"]] = msg
 
                 for seq_num in sorted(self.msg_buff):

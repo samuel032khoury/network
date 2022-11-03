@@ -38,8 +38,8 @@ class Sender:
                     self.receive_packet(conn)
                 elif conn == sys.stdin:
                     data = sys.stdin.read(DATA_SIZE)
-        
                     if data:
+                        ## REFACTOR
                         self.log("Sending message '%s'" % data)
                         message = { 
                             "type": "msg",
@@ -57,16 +57,16 @@ class Sender:
                         self.log("All done!")
                         sys.exit(0) 
 
+            ## REFACTOR
             timeout_pkts, flying_pkts = [], []
             for packet in self.pending_pkts.values():
                 (timeout_pkts if time.time() - packet["time"] > 2*self.rtt else flying_pkts).append(packet)
             timeout_pkt = None if not timeout_pkts else min(timeout_pkts, key=lambda x: x["msg"]["seq_num"])["msg"]
-            self.waiting =  timeout_pkts or len(flying_pkts) >= self.cwnd
+            self.waiting = timeout_pkts or len(flying_pkts) >= self.cwnd
 
             if timeout_pkt and len(flying_pkts) < self.cwnd:
                 self.log("Resending packet '%s'" % timeout_pkt)
                 self.send(timeout_pkt)
-                self.pending_pkts[timeout_pkt["seq_num"]]['msg'] = timeout_pkt
                 self.pending_pkts[timeout_pkt["seq_num"]]["time"] = time.time()
                 self.cwnd/=2
 
@@ -82,10 +82,8 @@ class Sender:
                 if message["ack_num"] in self.pending_pkts:
                     new_rtt = time.time() - self.pending_pkts[message["ack_num"]]["time"]
                     self.rtt = 0.8 * self.rtt + 0.2 * new_rtt
-
-                    self.pending_pkts.pop(message["ack_num"])
-
                     self.cwnd += 1
+                    self.pending_pkts.pop(message["ack_num"])
                 else:
                     self.log("Received duplicate ACK packet '%s'" % packet)
             else:
