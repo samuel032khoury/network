@@ -74,7 +74,7 @@ class Sender:
                 self.log("Resending packet '%s'" % retransmission)
                 self.send(retransmission)
                 self.pkt_buff[retransmission["seq_num"]]["time"] = time.time()
-                self.cwnd/=2 # shrinking the window since the network is congested
+                self.cwnd /= 2 # shrinking the window since the network is congested
 
     def send_packet(self, data):
         self.log("Sending message '%s'" % data)
@@ -106,7 +106,7 @@ class Sender:
                 # calculate the new RTT based on the time of the most recent ACK
                 if message["ack_num"] in self.pkt_buff:
                     new_rtt = time.time() - self.pkt_buff[message["ack_num"]]["time"]
-                    self.rtt = 0.8 * self.rtt + 0.2 * new_rtt
+                    self.rtt = 0.875 * self.rtt + 0.125 * new_rtt # ALPHA = 0.875
                     self.cwnd += 1 # increase the window size since the network is not congested
                     self.pkt_buff.pop(message["ack_num"])
                 else:
