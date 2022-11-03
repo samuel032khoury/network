@@ -57,7 +57,7 @@ class Receiver:
                 self.send({ "type": "ack", "ack_num": msg["seq_num"]})
 
         return
-
+        
     # receive packets from the sender
     def recv_packet(self, conn):
         packet, addr = conn.recvfrom(65535)
