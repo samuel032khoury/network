@@ -14,7 +14,8 @@ class Receiver:
 
 
         self.ack_num = 0
-        self.msg_hist = {}
+        self.msg_buff = {}
+        self.msg_hist = []
 
     def send(self, message):
         self.socket.sendto(json.dumps(message).encode(), (self.remote_host, self.remote_port))
@@ -42,18 +43,20 @@ class Receiver:
                 except (ValueError, KeyError) as err:
                     self.log("Dropped corrupted packet '%s'" % packet)
                     continue
-                if msg["seq_num"] in self.msg_hist:
+                if msg["seq_num"] in self.msg_buff:
                     self.send({ "type": "ack", "ack_num": msg["seq_num"]})
                     continue
 
                 self.log("Received packet '%s'" % msg)
-                self.msg_hist[msg["seq_num"]] = msg
+                if msg["seq_num"] not in self.msg_hist:
+                    self.msg_buff[msg["seq_num"]] = msg
 
-                for seq_num in sorted(self.msg_hist):
+                for seq_num in sorted(self.msg_buff):
                     if seq_num == self.ack_num:
-                        print(self.msg_hist[seq_num]["data"], end='', flush=True)
-                        self.ack_num += len(self.msg_hist[seq_num]["data"])
-                        self.msg_hist.pop(seq_num)
+                        print(self.msg_buff[seq_num]["data"], end='', flush=True)
+                        self.ack_num += len(self.msg_buff[seq_num]["data"])
+                        self.msg_hist.append(seq_num)
+                        self.msg_buff.pop(seq_num)
                     elif (seq_num > self.ack_num):
                         break
 
