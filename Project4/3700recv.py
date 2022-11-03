@@ -12,8 +12,7 @@ class Receiver:
         self.remote_host = None
         self.remote_port = None
 
-
-        self.ack_num = 0
+        self.ack_num = 0 # corresponds to the sequence number of the received packet
         self.msg_buff = {}
         self.msg_hist = []
 
@@ -34,15 +33,20 @@ class Receiver:
                     self.remote_host = addr[0]
                     self.remote_port = addr[1]
 
-
                 try:
                     packet = packet.decode()
                     msg = json.loads(packet)
+
+                    # if the hash of the packet data does not match the data, the packet is corrupted
                     if sha256(msg["data"].encode()).hexdigest() != msg["hash"]:
                         raise ValueError
+
                 except (ValueError, KeyError) as err:
+                    # corrupted packets are dropped so that the sender can retransmit them
                     self.log("Dropped corrupted packet '%s'" % packet)
                     continue
+
+                # if the packet is received intact, send an ACK to the sender
                 if msg["seq_num"] in self.msg_buff:
                     self.send({ "type": "ack", "ack_num": msg["seq_num"]})
                     continue
@@ -51,11 +55,12 @@ class Receiver:
                 if msg["seq_num"] not in self.msg_hist:
                     self.msg_buff[msg["seq_num"]] = msg
 
+                # find the packet with the minimum sequence number to send ACKs in order
                 for seq_num in sorted(self.msg_buff):
                     if seq_num == self.ack_num:
                         print(self.msg_buff[seq_num]["data"], end='', flush=True)
-                        self.ack_num += len(self.msg_buff[seq_num]["data"])
-                        self.msg_buff.pop(seq_num)
+                        self.ack_num += len(self.msg_buff[seq_num]["data"]) # incrementing the ack number for the next packet
+                        self.msg_buff.pop(seq_num) 
                         self.msg_hist.append(seq_num)
                     else:
                         break
