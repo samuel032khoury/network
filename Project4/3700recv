@@ -28,23 +28,8 @@ class Receiver:
             socks = select.select([self.socket], [], [])[0]
             for conn in socks:
                 ## REFACTOR
-                packet, addr = conn.recvfrom(65535)
-                packet = packet.decode()
-
-                if self.remote_host is None:
-                    self.remote_host = addr[0]
-                    self.remote_port = addr[1]
-
-                try:
-                    msg = json.loads(packet)
-
-                    # if the hash of the packet data does not match the data, the packet is corrupted
-                    if sha256(msg["data"].encode()).hexdigest() != msg["hash"]:
-                        raise ValueError
-
-                except (ValueError, KeyError) as err:
-                    # corrupted packets are dropped so that the sender can retransmit them
-                    self.log("Dropped corrupted packet '%s'" % packet)
+                msg = self.recv_packet(conn)
+                if not msg:
                     continue
 
                 # if the packet is received intact, send an ACK to the sender
@@ -69,6 +54,26 @@ class Receiver:
                 self.send({ "type": "ack", "ack_num": msg["seq_num"]})
 
         return
+    def recv_packet(self, conn):
+        packet, addr = conn.recvfrom(65535)
+        packet = packet.decode()
+
+        if self.remote_host is None:
+            self.remote_host = addr[0]
+            self.remote_port = addr[1]
+
+        try:
+            msg = json.loads(packet)
+
+            # if the hash of the packet data does not match the data, the packet is corrupted
+            if sha256(msg["data"].encode()).hexdigest() != msg["hash"]:
+                raise ValueError
+
+        except (ValueError, KeyError) as err:
+            # corrupted packets are dropped so that the sender can retransmit them
+            self.log("Dropped corrupted packet '%s'" % packet)
+            return None
+        return msg
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='receive data')
