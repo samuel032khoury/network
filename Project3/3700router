@@ -116,21 +116,21 @@ class Router:
     # Aggregate all possible entries on the routing table that are adjacent numerically, forward to
     # the same next-hop router, and  have the same attributes
     def aggregate(self, target=None):
-        # Determine if two networks have the same localpref, origin, selfOrigin, and ASPath
-        def sameAttr(netOne, netTwo):
-            return (netOne["localpref"] == netTwo["localpref"] 
-                and netOne["origin"] == netTwo["origin"] 
-                and netOne["selfOrigin"] == netTwo["selfOrigin"] 
-                and netOne["ASPath"] == netTwo["ASPath"])
-        # Determine if two networks are adjacent: have the same netmask and have same network prefix
-        def adjacentNets(netOne, netTwo):
-            if netOne['netmask'] != netTwo['netmask']:
+        # Determine if two routes have the same localpref, origin, selfOrigin, and ASPath
+        def sameAttr(routeOne, routeTwo):
+            return (routeOne["localpref"] == routeTwo["localpref"] 
+                and routeOne["origin"] == routeTwo["origin"] 
+                and routeOne["selfOrigin"] == routeTwo["selfOrigin"] 
+                and routeOne["ASPath"] == routeTwo["ASPath"])
+        # Determine if two routes are adjacent: have the same netmask and have same network prefix
+        def adjacentRoutes(routeOne, routeTwo):
+            if routeOne['netmask'] != routeTwo['netmask']:
                 return False
-            netMskBin = ipToBin(netOne['netmask'])
-            netOneNwBin = ipToBin(netOne['network'])
-            netTwoNwBin = ipToBin(netTwo['network'])
-            diffPos = netOneNwBin.rfind('1')
-            return netOneNwBin[:diffPos] == netTwoNwBin[: diffPos]
+            netMskBin = ipToBin(routeOne['netmask'])
+            routeOneNwBin = ipToBin(routeOne['network'])
+            routeTwoNwBin = ipToBin(routeTwo['network'])
+            diffPos = routeOneNwBin.rfind('1')
+            return routeOneNwBin[:diffPos] == routeTwoNwBin[: diffPos]
 
         # if no specific aggregate target, aggregate the entire routing table
         targetList = [target] if target else self.routingTable.keys()
@@ -140,29 +140,29 @@ class Router:
             for _ in range(maxMergeCount):
                 currRoutesList = self.routingTable[currNeighbor]
                 traversed = True
-                # look into all possible combination of paired networks and see if any of them can
+                # look into all possible combination of paired routes and see if any of them can
                 # be merged
-                for (netOne, netTwo) in list(combinations(currRoutesList, 2)):
-                    # two networks can be merged only if they have same attributes and adjacent
-                    if (sameAttr(netOne, netTwo) and adjacentNets(netOne, netTwo)):
-                        aggregatedNw = (netOne['network'] if netOne['network'] < netTwo['network']
-                                   else netTwo['network'])
-                        currMskBin = ipToBin(netOne["netmask"])
+                for (routeOne, routeTwo) in list(combinations(currRoutesList, 2)):
+                    # two routes can be merged only if they have same attributes and adjacent
+                    if (sameAttr(routeOne, routeTwo) and adjacentRoutes(routeOne, routeTwo)):
+                        aggregatedNw = (routeOne['network'] if routeOne['network'] < routeTwo['network']
+                                   else routeTwo['network'])
+                        currMskBin = ipToBin(routeOne["netmask"])
                         lastOne = currMskBin.rfind('1')
                         aggregatedMskBin = currMskBin[:lastOne] + '0' + currMskBin[lastOne + 1:]
                         aggregatedMsk = binToIp(aggregatedMskBin)
                         aggregatedRoute = {
                             "network":aggregatedNw,
                             "netmask":aggregatedMsk,
-                            "localpref":netOne["localpref"],
-                            "origin":netOne["origin"],
-                            "selfOrigin":netOne["selfOrigin"],
-                            "ASPath":netOne["ASPath"]
+                            "localpref":routeOne["localpref"],
+                            "origin":routeOne["origin"],
+                            "selfOrigin":routeOne["selfOrigin"],
+                            "ASPath":routeOne["ASPath"]
                         }
                         # add the merged route to current neighbor's route list, and remove old ones 
                         currRoutesList.append(aggregatedRoute)
-                        currRoutesList.remove(netOne)
-                        currRoutesList.remove(netTwo)
+                        currRoutesList.remove(routeOne)
+                        currRoutesList.remove(routeTwo)
                         traversed = False
                         break
                 # The entire list is traversed without entering in the merging branch implies

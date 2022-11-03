@@ -26,12 +26,13 @@ class Sender:
 
     # sends packets to the receiver
     def send(self, message):
-        self.socket.sendto(json.dumps(message).encode(), (self.host, self.remote_port))
+        self.socket.sendto(json.dumps(message).encode(),
+                          (self.host, self.remote_port))
 
-    # sends packets and receives acks from the receiver
+    # launch the send side - sends packets and receives acks from the receiver
     def run(self):
         while True:
-            sockets = [self.socket, sys.stdin] if not self.waiting else [self.socket]
+            sockets = [self.socket] if self.waiting else [self.socket,sys.stdin]
             socks = select.select(sockets, [], [], 0.1)[0]
 
             for conn in socks:
@@ -40,25 +41,22 @@ class Sender:
                     self.recv_packet(conn)
                 elif conn == sys.stdin:
                     data = sys.stdin.read(DATA_SIZE)
-                    # create a packet and send it
+                    # if data is not empty, create a packet and send it
                     if data:
                         self.send_packet(data)
-                    # if no more data to send and the buffer has been cleared (all teh sent packets has been acked), exit the program gracefully
+                    # if no more data to send and the buffer has been cleared 
+                    # (all teh sent packets has been acked), exit the program
                     elif not self.pkt_buff:
                         self.log("All done!")
                         sys.exit(0) 
 
-            # stores packets that have not been acked and are timed-out to retransmit them
+            # tracks packets that have not been acked but are timed-out
             timeout_pkts = dict()
-            # stores packets that have not been acked and are not timed-out 
+            # tracks packets that have not been acked and are not timed-out 
             pending_pkts = dict()
-<<<<<<< HEAD
-            # for every packet in the buffer add it to timeout if it's timeout, add it to pending 
-            # if it's not timeout
-=======
-            # for every packet in the buffer add it to timeout_pkts if it's timed-out, 
-            # otherwise add it to pending_pkts if it's not timed-out
->>>>>>> 973de2e8b0cfe37fd52fba56621ed105ffd2d640
+
+            # for every packet in the buffer add it to timeout_pkts if it's 
+            # timed-out, otherwise add it to pending_pkts if it's not timed-out
             for packet in self.pkt_buff.values():
                 pkt_seq = packet["msg"]["seq_num"]
                 if time.time() - packet["time"] > (2 * self.rtt):
@@ -67,27 +65,34 @@ class Sender:
                     pending_pkts[pkt_seq] = packet
 
 
-            # if there are timed-out packets, find the one with the lowest sequence number to retransmit in order
-            retransmission = None if not timeout_pkts else timeout_pkts[min(timeout_pkts)]["msg"]
-            # flip self.waiting if there are timed-out packets or the packets currently in 
-            # transmission exceed the size of the congestion window
+            # if there are timed-out packets, find the one with the lowest 
+            # sequence number and retransmit it
+            retransmission = (None if not timeout_pkts 
+                        else timeout_pkts[min(timeout_pkts)]["msg"])
+            # flip the waiting flag to true if there are timed-out packets or
+            # the packets currently in transmission is of the size of the 
+            # congestion window
             self.waiting =  timeout_pkts or len(pending_pkts) >= self.cwnd
 
-            # checks if a packet can be retransmitted provided that the window has not reached its
-            # threshold with the packets currently in transmission (not timed-out)
+            # checks if a packet can be retransmitted provided that the window 
+            # has not reached its threshold with the packets currently in 
+            # transmission (not timed-out)
             if retransmission and len(pending_pkts) < self.cwnd:
                 self.log("Resending packet '%s'" % retransmission)
                 self.send(retransmission)
                 self.pkt_buff[retransmission["seq_num"]]["time"] = time.time()
-                self.cwnd /= 2 # shrinking the window since the network is congested
+                # shrinking the window to half of the size if the network is
+                # congested
+                self.cwnd /= 2
 
+    # send a msg packet to the reciever, and increment the sequence number
     def send_packet(self, data):
         self.log("Sending message '%s'" % data)
         message = { 
             "type": "msg",
             "seq_num": self.seq_num,
             "data": data,
-            "hash": sha256(data.encode()).hexdigest() # to check whether the packet is corrupted on the receiver's end
+            "hash": sha256(data.encode()).hexdigest() # for integrity check
         }
 
         self.send(message)
@@ -95,8 +100,8 @@ class Sender:
             "msg":message,
             "time": time.time() # the time at which the packet is sent
         }
-
-        self.seq_num += DATA_SIZE # incrementing the sequence number for the next packet
+        # incrementing the sequence number for the next packet
+        self.seq_num += DATA_SIZE 
 
     # receives packets (ACKS) from the receiver
     def recv_packet(self, conn):
@@ -107,18 +112,22 @@ class Sender:
             message = json.loads(packet)
             if message["type"] == "ack":
                 self.log("Received ACK packet '%s'" % packet)
-
+                ack_num = message["ack_num"]
                 # calculate the new RTT based on the time of the most recent ACK
-                if message["ack_num"] in self.pkt_buff:
-                    new_rtt = time.time() - self.pkt_buff[message["ack_num"]]["time"]
-                    self.rtt = 0.875 * self.rtt + 0.125 * new_rtt # ALPHA = 0.875
-                    self.cwnd += 1 # increase the window size since the network is not congested
-                    self.pkt_buff.pop(message["ack_num"])
+                if ack_num in self.pkt_buff:
+                    new_rtt = time.time() - self.pkt_buff[ack_num]["time"]
+                    # dynamically adjust the rtt (ALPHA = 0.875) and 
+                    # the cwnd (linearly)
+                    self.rtt = 0.875 * self.rtt + 0.125 * new_rtt
+                    self.cwnd += 1
+                    self.pkt_buff.pop(ack_num)
                 else:
                     self.log("Received duplicate ACK packet '%s'" % packet)
             else:
                 raise Exception("Unknown packet type")
-        except (ValueError, KeyError) as err: # exception occurs only when the packet is corrupted and cannot be converted to JSON
+        except (ValueError, KeyError) as err: 
+            # drop a packet if the data cannot be converted to JSON or
+            # doesn't have the expected JSON schema
             self.log("Dropped corrupted packet '%s'" % packet)
 
 

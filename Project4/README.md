@@ -1,12 +1,47 @@
 # README
 # Project 4 - Reliable Transport Protocol
 
-## High-Level Approach
+## Running the Program
 
-The program is written in python and runs on the command line with one argument, which is the name of the configuration file. The program runs in a simulator that emulates an unreliable network.
+The program is written in python and runs on the command line. We assume the receiver is run first and will wait indefinitely, and the sender can just send the data to the receiver.
 
+### Launch the Reciver
+
+The syntax for launching the receiver is
+
+```shell
+$ ./3700recv
 ```
+
+After the reciever is launched, it will bind to a UDP port and prints it out to `STDERR`
+
+### Launch the Sender
+
+The command line syntax for the sender is
+
+```shell
+$ ./3700send <recv_host> <recv_port>
+```
+
+- `recv_host` (Required) The domain name (e.g., “foo.com”) or IP address (e.g., “1.2.3.4”) of the remote host
+- `recv_port` (Required) The UDP port of the remote host.
+
+The sender will get all the data supplied by `STDIN`, until `EOF` is reached
+
+### Receive on Reciver
+
+- The receiver prints out the log message to `STDERR` and the data that it receives to `STDOUT`.
+
+## Testing the Program
+
+The tests runs in a simulator that emulates an unreliable network.
+
+
+```shell
+# run one test
 $ ./run [config-file]
+# or run all the tests at once
+$ ./test
 ```
 
 ## Design

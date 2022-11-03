@@ -12,68 +12,69 @@ class Receiver:
         self.remote_host = None
         self.remote_port = None
 
-        self.ack_num = 0 # corresponds to the sequence number of the received packet
+        self.ack_num = 0 # tracking the ack number for the ACK packet
         self.msg_buff = {} # messages that need to be ACKed
         self.msg_hist = [] # messages that have already been ACKed
 
-
     # sends packets (ACKs) to the sender
     def send(self, message):
-        self.socket.sendto(json.dumps(message).encode(), (self.remote_host, self.remote_port))
+        self.socket.sendto(json.dumps(message).encode(), 
+                           (self.remote_host, self.remote_port))
 
+    # log the message to the console
     def log(self, message):
         sys.stderr.write(message + "\n")
         sys.stderr.flush()
 
-    # receives packets from the sender and sends ACKs
+    # launch the recive side - receives packets from the sender and sends ACKs
     def run(self):
         while True:
             socks = select.select([self.socket], [], [])[0]
             for conn in socks:
                 msg = self.recv_packet(conn)
 
-                # if recived a corrupted msg, discard it and skip the current iteration
+                # if recived a corrupted msg, discard it and skip this iteration
                 if not msg:
                     continue
-
-<<<<<<< HEAD
-                if msg["seq_num"] not in self.msg_hist:
-                    # if the packet is new, we add the message to the buffer and send an ACK
-                    if msg["seq_num"] not in self.msg_buff:
+                msg_seq_num = msg["seq_num"]
+                # We only process packets that has not been acked
+                if msg_seq_num not in self.msg_hist:
+                    # if the packet has nevern been seen, we it to the buffer
+                    if msg_seq_num not in self.msg_buff:
                         self.log("Received packet '%s'" % msg)
-                        self.msg_buff[msg["seq_num"]] = msg
+                        self.msg_buff[msg_seq_num] = msg
+                    
+                    # if the packet appears to be one that has been acked, send
+                    # an ACK again
                     else: 
-                        self.send({ "type": "ack", "ack_num": msg["seq_num"]})
-=======
-                # if the packet is received intact, send an ACK to the sender
-                if msg["seq_num"] in self.msg_buff:
-                    self.send({ "type": "ack", "ack_num": msg["seq_num"]})
+                        self.send({ "type": "ack", "ack_num": msg_seq_num})
+                        continue
 
-                # add the message to the buffer to send an ACK
-                elif msg["seq_num"] not in self.msg_hist:
-                    self.log("Received packet '%s'" % msg)
-                    self.msg_buff[msg["seq_num"]] = msg
->>>>>>> 973de2e8b0cfe37fd52fba56621ed105ffd2d640
+                # Always send back an ack
+                self.send({ "type": "ack", "ack_num": msg_seq_num})
 
-                # find the packet with the minimum sequence number to send ACKs in order
+                # clear the buffer
                 for seq_num in sorted(self.msg_buff):
+                    # find the message that has the same sequence number as the 
+                    # tracked ack number, print it out and send back an ACK
+                    data = self.msg_buff[seq_num]["data"]
                     if seq_num == self.ack_num:
-                        print(self.msg_buff[seq_num]["data"], end='', flush=True)
-                        self.ack_num += len(self.msg_buff[seq_num]["data"]) # incrementing the ack number for the next packet
+                        print(data, end='', flush=True)
+                        # incrementing the ack number
+                        self.ack_num += len(data) 
+                        # since the ACK has been sent, remove the message from 
+                        # the buffer and add it to the message history
                         self.msg_buff.pop(seq_num) 
-                        self.msg_hist.append(seq_num) # since the ACK has been sent, remove the message from the buffer and add it to the message history
+                        self.msg_hist.append(seq_num) 
+                    
+                    # leave all the ahead packet the in the buffer
                     else:
                         break
 
-                # Always send back an ack
-                self.send({ "type": "ack", "ack_num": msg["seq_num"]})
+                
 
         return
-<<<<<<< HEAD
 
-=======
-        
->>>>>>> 973de2e8b0cfe37fd52fba56621ed105ffd2d640
     # receive packets from the sender
     def recv_packet(self, conn):
         packet, addr = conn.recvfrom(65535)
@@ -83,15 +84,15 @@ class Receiver:
             self.remote_host = addr[0]
             self.remote_port = addr[1]
 
+        # check the integrity of the packet
         try:
             msg = json.loads(packet)
-
-            # if the hash of the packet data does not match the data, the packet is corrupted
+            # if fails the hash verification, the packet is corrupted
             if sha256(msg["data"].encode()).hexdigest() != msg["hash"]:
                 raise ValueError
 
         except (ValueError, KeyError) as err:
-            # corrupted packets are dropped so that the sender can retransmit them
+            # corrupted packets are dropped so the sender can retransmit them
             self.log("Dropped corrupted packet '%s'" % packet)
             return None
         return msg
