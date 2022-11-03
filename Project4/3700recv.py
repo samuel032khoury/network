@@ -31,17 +31,18 @@ class Receiver:
             socks = select.select([self.socket], [], [])[0]
             for conn in socks:
                 msg = self.recv_packet(conn)
+
+                # if recived a corrupted msg, discard it and skip the current iteration
                 if not msg:
                     continue
 
-                # if the packet is received intact, send an ACK to the sender
-                if msg["seq_num"] in self.msg_buff:
-                    self.send({ "type": "ack", "ack_num": msg["seq_num"]})
-
-                # add the message to the buffer to send an ACK
-                elif msg["seq_num"] not in self.msg_hist:
-                    self.log("Received packet '%s'" % msg)
-                    self.msg_buff[msg["seq_num"]] = msg
+                if msg["seq_num"] not in self.msg_hist:
+                    # if the packet is new, we add the message to the buffer and send an ACK
+                    if msg["seq_num"] not in self.msg_buff:
+                        self.log("Received packet '%s'" % msg)
+                        self.msg_buff[msg["seq_num"]] = msg
+                    else: 
+                        self.send({ "type": "ack", "ack_num": msg["seq_num"]})
 
                 # find the packet with the minimum sequence number to send ACKs in order
                 for seq_num in sorted(self.msg_buff):
@@ -57,7 +58,7 @@ class Receiver:
                 self.send({ "type": "ack", "ack_num": msg["seq_num"]})
 
         return
-        
+
     # receive packets from the sender
     def recv_packet(self, conn):
         packet, addr = conn.recvfrom(65535)
