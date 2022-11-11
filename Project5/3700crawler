@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+
+import argparse
+import socket
+
+DEFAULT_SERVER = "proj5.3700.network"
+DEFAULT_PORT = 443
+STATUS_CODE_200 = 200
+STATUS_CODE_302 = 302
+STATUS_CODE_403 = 403
+STATUS_CODE_404 = 404
+STATUS_CODE_503 = 503
+
+class Crawler:
+    def __init__(self, args):
+        self.server = args.server
+        self.port = args.port
+        self.username = args.username
+        self.password = args.password
+
+    def sendPostRequest(self, url):
+        def formatRequestBody():
+            return (self.username, self.password, self.csrftoken)
+
+        def formatRequestHeader(requestBody):
+            return (url, self.host, self.csrftoken, self.sessionid, str(len(requestBody)), requestBody)
+
+        post_request_body = 'username={}&password={}&csrfmiddlewaretoken={}&next=/fakebook/'.format(formatRequestBody())
+        post_request_header = 'POST {} HTTP/1.1\r\nHost: {}\r\nCookie: csrftoken={}; sessionid={}\r\nContent-type: application/x-www-form-urlencoded\r\nContent-length: {}\r\nConnection: close\r\n\r\n{}'.format(formatRequestHeader(post_request_body))
+
+        self.socket.send(post_request_header.encode('ascii'))
+        self.recvMessage() # create recvMessage helper
+
+        # # Get the response from the server
+        # data = ''
+        # temp = 'temp'
+
+        # while (len(temp) != 0):
+        #     temp = self.wrapped_socket.recv(10000).decode('ascii')
+        #     data += temp
+
+        # # Get the status code and update cookies
+        # status_code = self.get_status_code(data)
+        # self.update_cookies(data)
+
+        # # Either return data, re-request, or send a get request with redirect URL
+        # if '200' in status_code:
+        #     return data
+        # elif '302' in status_code:
+        #     new_url = self.get_redirect_url(data)
+        #     self.in_queue_or_visited.add(new_url)
+        #     return self.send_get_request(new_url)
+        # elif '503' in status_code:
+        #     return self.send_post_request(url)
+
+
+
+    def run(self):
+        request = "GET / HTTP/1.0\r\n\r\n"
+
+        print("Request to %s:%d" % (self.server, self.port))
+        print(request)
+        mysocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        mysocket.connect((self.server, self.port))
+        mysocket.send(request.encode('ascii'))
+
+        data = mysocket.recv(1000)
+        print("Response:\n%s" % data.decode('ascii'))
+
+        # request = self.loginToFakebook()
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='crawl Fakebook')
+    parser.add_argument('-s', dest="server", type=str, default=DEFAULT_SERVER, help="The server to crawl")
+    parser.add_argument('-p', dest="port", type=int, default=DEFAULT_PORT, help="The port to use")
+    parser.add_argument('username', type=str, help="The username to use")
+    parser.add_argument('password', type=str, help="The password to use")
+    args = parser.parse_args()
+    sender = Crawler(args)
+    sender.run()
