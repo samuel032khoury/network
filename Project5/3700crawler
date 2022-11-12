@@ -2,14 +2,18 @@
 
 import argparse
 import socket
+import ssl
 
 DEFAULT_SERVER = "proj5.3700.network"
 DEFAULT_PORT = 443
-STATUS_CODE_200 = 200
-STATUS_CODE_302 = 302
-STATUS_CODE_403 = 403
-STATUS_CODE_404 = 404
-STATUS_CODE_503 = 503
+CODE_SUCCESS = 200
+CODE_REDIRECT = 302
+CODE_FORBIDDEN = 403
+CODE_NOFOUND = 404
+CODE_INTERNALERR = 503
+
+CSRF_LEN = 64
+COOKIE_LEN = 32
 
 class Crawler:
     def __init__(self, args):
@@ -17,57 +21,97 @@ class Crawler:
         self.port = args.port
         self.username = args.username
         self.password = args.password
+        self.socket = None
+        self.csrf_token = None
+        self.session_id = None
+        
 
-    def sendPostRequest(self, url):
-        def formatRequestBody():
-            return (self.username, self.password, self.csrftoken)
+    def initSocket(self):
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket = ssl.wrap_socket(self.socket)
+        self.socket.connect((self.server, self.port))
 
-        def formatRequestHeader(requestBody):
-            return (url, self.host, self.csrftoken, self.sessionid, str(len(requestBody)), requestBody)
+    def getResp(self):
+        response = ''
+        while True:
+            data = self.socket.recv(10000)
+            if data:
+                response += data.decode('ascii')
+            else:
+                break
+        return response
 
-        post_request_body = 'username={}&password={}&csrfmiddlewaretoken={}&next=/fakebook/'.format(formatRequestBody())
-        post_request_header = 'POST {} HTTP/1.1\r\nHost: {}\r\nCookie: csrftoken={}; sessionid={}\r\nContent-type: application/x-www-form-urlencoded\r\nContent-length: {}\r\nConnection: close\r\n\r\n{}'.format(formatRequestHeader(post_request_body))
+    def getStatus(self, response):
+        return int(response.split('\r\n')[0].split()[1])
 
-        self.socket.send(post_request_header.encode('ascii'))
-        self.recvMessage() # create recvMessage helper
+    def sendGetRequest(self, url):
+        self.initSocket()
+        request = 'GET {} HTTP/1.1\r\n'
+        request += 'Host: {}\r\n'
+        request += 'Connection: close\r\n'
+        request+= 'Cookie: csrftoken={}; sessionid={}\r\n\r\n' if self.session_id else '\r\n'
+        request = request.format(url, self.server, self.csrf_token, self.session_id)
+        self.socket.send(request.encode('ascii'))
+        return self.getResp()
+    
+    def getSessionInfo(self, response):
+        session_id_anchor = "sessionid="
+        session_id = response[response.index(session_id_anchor) + len(session_id_anchor):]
+        session_id = session_id[:COOKIE_LEN]
 
-        # # Get the response from the server
-        # data = ''
-        # temp = 'temp'
+        csrf_token_anchor = "csrftoken="
+        csrf_token = response[response.index(csrf_token_anchor) + len(csrf_token_anchor):]
+        csrf_token = csrf_token[:CSRF_LEN]
+        return csrf_token, session_id
 
-        # while (len(temp) != 0):
-        #     temp = self.wrapped_socket.recv(10000).decode('ascii')
-        #     data += temp
+    def login(self):
+        def getCSRFMiddleWare(response):
+            cmw_anchor = '"csrfmiddlewaretoken" value="'
+            cmw_token = response[response.index(cmw_anchor) + len(cmw_anchor):]
+            cmw_token = cmw_token[:CSRF_LEN]
+            return cmw_token
 
-        # # Get the status code and update cookies
-        # status_code = self.get_status_code(data)
-        # self.update_cookies(data)
+        # Obtain session info via GET
+        response = self.sendGetRequest('/accounts/login/?next=/fakebook/')
+        status = self.getStatus(response)
+        if status == CODE_INTERNALERR:
+            return self.login()
+        self.csrf_token, self.session_id = self.getSessionInfo(response)
+        cmw_token = getCSRFMiddleWare(response)
 
-        # # Either return data, re-request, or send a get request with redirect URL
-        # if '200' in status_code:
-        #     return data
-        # elif '302' in status_code:
-        #     new_url = self.get_redirect_url(data)
-        #     self.in_queue_or_visited.add(new_url)
-        #     return self.send_get_request(new_url)
-        # elif '503' in status_code:
-        #     return self.send_post_request(url)
+
+        # Log in as a new session  
+        self.initSocket()
+        body = "username={}&password={}&csrfmiddlewaretoken={}&next=/fakebook/"
+        body = body.format(self.username, self.password, cmw_token)
+        header = "POST /accounts/login/?next=/fakebook/ HTTP/1.1\r\n"
+        header += "Host: {}\r\n"
+        header += "Cookie: csrftoken={}; sessionid={}\r\n"
+        header += "Content-type: application/x-www-form-urlencoded\r\n"
+        header += "Content-length: {}\r\n"
+        header += "Connection: close\r\n\r\n"
+        header = header.format(self.server, self.csrf_token, self.session_id, len(body))
+        request = header + body
+        self.socket.send(request.encode('ascii'))
+        response = self.getResp()
+        self.csrf_token, self.session_id = self.getSessionInfo(response)
+        status = self.getStatus(response)
+        if status == CODE_INTERNALERR:
+            return self.login()
+        elif status != CODE_REDIRECT:
+            exit(0)
+
+        # handle redirection
+        redirection_anchor = 'Location:'
+        redirection = response[response.index(redirection_anchor) + len(redirection_anchor):]
+        redirection = redirection[:redirection.index('\r\n')]
+        response = self.sendGetRequest(redirection)
+        return response
 
 
 
     def run(self):
-        request = "GET / HTTP/1.0\r\n\r\n"
-
-        print("Request to %s:%d" % (self.server, self.port))
-        print(request)
-        mysocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        mysocket.connect((self.server, self.port))
-        mysocket.send(request.encode('ascii'))
-
-        data = mysocket.recv(1000)
-        print("Response:\n%s" % data.decode('ascii'))
-
-        # request = self.loginToFakebook()
+        self.login()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='crawl Fakebook')
