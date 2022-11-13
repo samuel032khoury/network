@@ -1,42 +1,48 @@
 #!/usr/bin/env python3
 
-import argparse
-import socket
-import ssl
+import argparse, socket, ssl
 
+# Constants-Default Connection
 DEFAULT_SERVER = "proj5.3700.network"
 DEFAULT_PORT = 443
 
+# Constatnts-Status Code
 CODE_SUCCESS = 200
 CODE_REDIRECT = 302
 CODE_FORBIDDEN = 403
 CODE_NOFOUND = 404
 CODE_INTERNALERR = 503
 
+# Constants-String Length
 CSRF_LEN = 64
 COOKIE_LEN = 32
 FLAG_LEN = 64
 
+# To represent a web crawler
 class Crawler:
+    # initialize a web crawler
     def __init__(self, args):
         self.server = args.server
         self.port = args.port
         self.username = args.username
         self.password = args.password
+
         self.socket = None
         self.csrf_token = None
         self.session_id = None
         
-        self.frontier = set()
-        self.log = set()
-        self.flags = set()
+        self.frontier = set() # to store scheduled to be visited urls
+        self.log = set() # to store all known urls
+        self.flags = set() # to store found flags
 
+    # initialize the socket connection
     def initSocket(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket = ssl.wrap_socket(self.socket)
         self.socket.connect((self.server, self.port))
 
-    def getResp(self):
+    # get the complete response from the server
+    def getResponse(self):
         response = ''
         while True:
             data = self.socket.recv(10000)
@@ -46,50 +52,57 @@ class Crawler:
                 break
         return response
 
-    def getStatus(self, response):
+    # get the status code of a response
+    def getStatusCode(self, response):
         return int(response.split('\r\n')[0].split()[1])
 
-    def getsSubString(self, string, prefix, suffix=None, leng=0):
-        if not (suffix or leng):
-            raise Exception("No end tag defined!")
+    # get the enclosed substring of length strLen that follows the prefix; if strLen is undefined, 
+    # a suffix is expected, so we can get the enclosed substring between prefix and suffix
+    def getSubstring(self, string, prefix, suffix=None, strLen=None):
+        if not (suffix or strLen):
+            raise Exception("Enclosure was not defined!")
         prefix_trunc = string[string.index(prefix) + len(prefix):]
+        if strLen:
+            return prefix_trunc[:strLen]
         if suffix:
             return prefix_trunc[:prefix_trunc.index(suffix)]
-        if leng:
-            return prefix_trunc[:leng]
         
+    # get the scrf token and the seesion id for a seesion
     def getSessionInfo(self, response):
-        session_id = self.getsSubString(response, prefix="sessionid=", leng=COOKIE_LEN)
-        csrf_token = self.getsSubString(response, prefix="csrftoken=", leng=CSRF_LEN)
+        session_id = self.getSubstring(response, prefix="sessionid=", strLen=COOKIE_LEN)
+        csrf_token = self.getSubstring(response, prefix="csrftoken=", strLen=CSRF_LEN)
         return csrf_token, session_id
 
+    # send a GET request to the url
     def sendGetRequest(self, url):
         self.initSocket()
+        # compose the request message
         request = 'GET {} HTTP/1.1\r\n'
         request += 'Host: {}\r\n'
         request += 'Connection: close\r\n'
+        # include Cookie header only if session info is defined
         request+= 'Cookie: csrftoken={}; sessionid={}\r\n\r\n' if self.session_id else '\r\n'
         request = request.format(url, self.server, self.csrf_token, self.session_id)
+        # send the request and get the response
         self.socket.send(request.encode('ascii'))
-        return self.getResp()
+        return self.getResponse()
 
+    # login to the website
     def login(self):
-        def getCSRFMiddleWare(response):
-            cmw_token = self.getsSubString(response, prefix='"csrfmiddlewaretoken" value="',
-                                                     leng=CSRF_LEN)
-            return cmw_token
-
         # Obtain session info via GET
         response = self.sendGetRequest('/accounts/login/?next=/fakebook/')
-        status = self.getStatus(response)
+        status = self.getStatusCode(response)
+        # if a server internal error is recevied, try login again
         if status == CODE_INTERNALERR:
             return self.login()
         self.csrf_token, self.session_id = self.getSessionInfo(response)
-        cmw_token = getCSRFMiddleWare(response)
-
+        # get the csrfmiddlewaretoken from the login page
+        cmw_token = self.getSubstring(response, prefix='"csrfmiddlewaretoken" value="',
+                                                strLen=CSRF_LEN)
 
         # Log in as a new session  
         self.initSocket()
+        # compose the request message
         body = "username={}&password={}&csrfmiddlewaretoken={}&next=/fakebook/"
         body = body.format(self.username, self.password, cmw_token)
         header = "POST /accounts/login/?next=/fakebook/ HTTP/1.1\r\n"
@@ -100,59 +113,74 @@ class Crawler:
         header += "Connection: close\r\n\r\n"
         header = header.format(self.server, self.csrf_token, self.session_id, len(body))
         request = header + body
+        # send the request and get the response
         self.socket.send(request.encode('ascii'))
-        response = self.getResp()
-        self.csrf_token, self.session_id = self.getSessionInfo(response)
-        status = self.getStatus(response)
+        response = self.getResponse()
+        status = self.getStatusCode(response)
+
+        # if a server internal error is recevied, try login again
         if status == CODE_INTERNALERR:
             return self.login()
+        # if a redirect is not recevied, terminate the program
         elif status != CODE_REDIRECT:
             exit(0)
 
-        redirection = self.getsSubString(response, prefix='Location:', suffix='\r\n')
-        self.log.add(redirection)
-        self.frontier.add(redirection)
+        # update the seesion info
+        self.csrf_token, self.session_id = self.getSessionInfo(response)
+        # log the entry point (from the redirection) to both log and the frontier
+        entrypoint = self.getSubstring(response, prefix='Location:', suffix='\r\n')
+        self.log.add(entrypoint)
+        self.frontier.add(entrypoint)
 
+    # find flags by crawl the web pages
     def crawl(self):
+        # working with one of the url in the frontier
         curr_url = self.frontier.pop()
         response = self.sendGetRequest(curr_url)
-        status = self.getStatus(response)
+        status = self.getStatusCode(response)
+        # if received internal err, we try it later
         if status == CODE_INTERNALERR:
             self.frontier.add(curr_url)
             return
+        # if received page not found or forbidden, discard the url
         elif(status == CODE_NOFOUND or status == CODE_FORBIDDEN):
             return
+        # if GET OK, we examine the response
         elif status == CODE_SUCCESS:
-            
             # parsing lines section
-            flag_lines = []
-            url_lines = []
+            flag_lines = [] # to store html elements that of 'secret_flag' class
+            url_lines = [] # to store html anchor elements that have reference to a (valid) webpage
             for line in response.split('\n'):
                 if "class='secret_flag'" in line:
                     flag_lines.append(line)
                 if '<a href="/fakebook' in line:
                     url_lines.append(line)
-            # flag finding section
+            # add the flag to flags set
             for flag_line in flag_lines:
-                flag = self.getsSubString(flag_line, prefix='FLAG: ', leng=FLAG_LEN)
+                flag = self.getSubstring(flag_line, prefix='FLAG: ', strLen=FLAG_LEN)
                 self.flags.add(flag)
             
             if len(self.flags) == 5:
+                # early terminates, as all the flags has been revealed
                 return
-            # adding new urls section
+
             for url_line in url_lines:
-                url = self.getsSubString(url_line, prefix='<a href="', suffix='">')
+                url = self.getSubstring(url_line, prefix='<a href="', suffix='">')
+                # only log new urls
                 if url not in self.log:
                     self.frontier.add(url)
                     self.log.add(url)
-
+        # exception if received a response with the status code that matches none
         else:
             raise Exception("Invalid status from the response!")
 
+    # trigger the crawler to crawl
     def run(self):
         self.login()
+        # keep crawl if frontier is non-empty and not all flags are found
         while(self.frontier and len(self.flags) < 5):
             self.crawl()
+        # print out each flag on a line
         print('\n'.join(self.flags))
 
 if __name__ == "__main__":
