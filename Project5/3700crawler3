@@ -24,10 +24,11 @@ class Crawler:
         self.socket = None
         self.csrf_token = None
         self.session_id = None
-        
+
         self.frontier = set()
         self.log = set()
         self.flags = set()
+        
 
     def initSocket(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -44,20 +45,10 @@ class Crawler:
                 break
         return response
 
-    def getStatus(self, response):
+    def getStatusCode(self, response):
         return int(response.split('\r\n')[0].split()[1])
 
-    def getSessionInfo(self, response):
-        session_id_anchor = "sessionid="
-        session_id = response[response.index(session_id_anchor) + len(session_id_anchor):]
-        session_id = session_id[:COOKIE_LEN]
-
-        csrf_token_anchor = "csrftoken="
-        csrf_token = response[response.index(csrf_token_anchor) + len(csrf_token_anchor):]
-        csrf_token = csrf_token[:CSRF_LEN]
-        return csrf_token, session_id
-
-    def sendGetRequest(self, url):
+    def requetGET(self, url):
         self.initSocket()
         request = 'GET {} HTTP/1.1\r\n'
         request += 'Host: {}\r\n'
@@ -65,22 +56,28 @@ class Crawler:
         request+= 'Cookie: csrftoken={}; sessionid={}\r\n\r\n' if self.session_id else '\r\n'
         request = request.format(url, self.server, self.csrf_token, self.session_id)
         self.socket.send(request.encode('ascii'))
-        return self.getResp()
+        response = self.getResp()
+        self.csrf_token, self.session_id = self.getSessionInfo(response)
+        return None if self.getStatusCode(response) == CODE_NOFOUND else response
+    
+    def getSessionInfo(self, response):
+        session_id_anchor = "sessionid="
+        session_id = response[response.index(session_id_anchor) + len(session_id_anchor):][:COOKIE_LEN]
+
+        csrf_token_anchor = "csrftoken="
+        csrf_token = response[response.index(csrf_token_anchor) + len(csrf_token_anchor):][:CSRF_LEN]
+        return csrf_token, session_id
 
     def login(self):
-        def getCSRFMiddleWare(response):
-            cmw_anchor = '"csrfmiddlewaretoken" value="'
-            cmw_token = response[response.index(cmw_anchor) + len(cmw_anchor):]
-            cmw_token = cmw_token[:CSRF_LEN]
-            return cmw_token
 
         # Obtain session info via GET
-        response = self.sendGetRequest('/accounts/login/?next=/fakebook/')
-        status = self.getStatus(response)
+        response = self.requetGET('/accounts/login/?next=/fakebook/')
+        assert(response)
+        status = self.getStatusCode(response)
         if status == CODE_INTERNALERR:
             return self.login()
-        self.csrf_token, self.session_id = self.getSessionInfo(response)
-        cmw_token = getCSRFMiddleWare(response)
+        cmw_anchor = '"csrfmiddlewaretoken" value="'
+        cmw_token = response[response.index(cmw_anchor) + len(cmw_anchor):][:CSRF_LEN]
 
 
         # Log in as a new session  
@@ -98,7 +95,7 @@ class Crawler:
         self.socket.send(request.encode('ascii'))
         response = self.getResp()
         self.csrf_token, self.session_id = self.getSessionInfo(response)
-        status = self.getStatus(response)
+        status = self.getStatusCode(response)
         if status == CODE_INTERNALERR:
             return self.login()
         elif status != CODE_REDIRECT:
@@ -108,19 +105,14 @@ class Crawler:
         redirection_anchor = 'Location:'
         redirection = response[response.index(redirection_anchor) + len(redirection_anchor):]
         redirection = redirection[:redirection.index('\r\n')]
-        self.log.add(redirection)
-        self.frontier.add(redirection)
+        response = self.requetGET(redirection)
 
-    def crawl(self):
-        curr_url = self.frontier.pop()
-        response = self.sendGetRequest(curr_url)
-        print(response)
-        # f
+        # return the redirected landing page (home)
+        return response
 
     def run(self):
-        self.login()
-        while(self.frontier and len(self.flags) < 5):
-            self.crawl()
+        home = self.login()
+        
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='crawl Fakebook')
