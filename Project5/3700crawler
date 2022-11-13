@@ -6,6 +6,7 @@ import ssl
 
 DEFAULT_SERVER = "proj5.3700.network"
 DEFAULT_PORT = 443
+
 CODE_SUCCESS = 200
 CODE_REDIRECT = 302
 CODE_FORBIDDEN = 403
@@ -14,6 +15,7 @@ CODE_INTERNALERR = 503
 
 CSRF_LEN = 64
 COOKIE_LEN = 32
+FLAG_LEN = 64
 
 class Crawler:
     def __init__(self, args):
@@ -47,6 +49,8 @@ class Crawler:
     def getStatus(self, response):
         return int(response.split('\r\n')[0].split()[1])
 
+    # def getSubstring(prefix, suffix=None, len=-1):
+        
     def getSessionInfo(self, response):
         session_id_anchor = "sessionid="
         session_id = response[response.index(session_id_anchor) + len(session_id_anchor):]
@@ -114,13 +118,48 @@ class Crawler:
     def crawl(self):
         curr_url = self.frontier.pop()
         response = self.sendGetRequest(curr_url)
-        print(response)
-        # f
+        status = self.getStatus(response)
+        if status == CODE_INTERNALERR:
+            self.frontier.add(curr_url)
+            return
+        elif(status == CODE_NOFOUND or status == CODE_FORBIDDEN):
+            return
+        elif status == CODE_SUCCESS:
+            
+            # parsing lines section
+            flag_lines = []
+            url_lines = []
+            for line in response.split('\n'):
+                if "class='secret_flag'" in line:
+                    flag_lines.append(line)
+                if '<a href="/fakebook' in line:
+                    url_lines.append(line)
+            # flag finding section
+            for flag_line in flag_lines:
+                flag_anchor = 'FLAG: '
+                flag = flag_line[flag_line.index(flag_anchor) + len(flag_anchor):][:FLAG_LEN]
+                self.flags.add(flag)
+            
+            if len(self.flags) == 5:
+                return
+
+            # adding new urls section
+            for url_line in url_lines:
+                url_anchor = '<a href="'
+                url = url_line[url_line.index(url_anchor) + len(url_anchor):]
+                url = url[:url.index('">')]
+                if url not in self.log:
+                    self.frontier.add(url)
+                    self.log.add(url)
+
+        else:
+            raise Exception("Invalid status from the response!")
 
     def run(self):
         self.login()
         while(self.frontier and len(self.flags) < 5):
             self.crawl()
+        print('\n'.join(self.flags))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='crawl Fakebook')
