@@ -49,16 +49,20 @@ class Crawler:
     def getStatus(self, response):
         return int(response.split('\r\n')[0].split()[1])
 
-    # def getSubstring(prefix, suffix=None, len=-1):
+    def getsSubString(self, string, prefix, suffix=None, leng=0):
+        if not (suffix or leng):
+            raise Exception("No end tag defined!")
+        prefix_trunc = string[string.index(prefix) + len(prefix):]
+        if suffix:
+            print(prefix_trunc)
+            return prefix_trunc[:prefix_trunc.index(suffix)]
+        if leng:
+            return prefix_trunc[:leng]
+
         
     def getSessionInfo(self, response):
-        session_id_anchor = "sessionid="
-        session_id = response[response.index(session_id_anchor) + len(session_id_anchor):]
-        session_id = session_id[:COOKIE_LEN]
-
-        csrf_token_anchor = "csrftoken="
-        csrf_token = response[response.index(csrf_token_anchor) + len(csrf_token_anchor):]
-        csrf_token = csrf_token[:CSRF_LEN]
+        session_id = self.getsSubString(response, prefix="sessionid=", leng=COOKIE_LEN)
+        csrf_token = self.getsSubString(response, prefix="csrftoken=", leng=CSRF_LEN)
         return csrf_token, session_id
 
     def sendGetRequest(self, url):
@@ -73,9 +77,8 @@ class Crawler:
 
     def login(self):
         def getCSRFMiddleWare(response):
-            cmw_anchor = '"csrfmiddlewaretoken" value="'
-            cmw_token = response[response.index(cmw_anchor) + len(cmw_anchor):]
-            cmw_token = cmw_token[:CSRF_LEN]
+            cmw_token = self.getsSubString(response, prefix='"csrfmiddlewaretoken" value="',
+                                                     leng=CSRF_LEN)
             return cmw_token
 
         # Obtain session info via GET
@@ -108,16 +111,14 @@ class Crawler:
         elif status != CODE_REDIRECT:
             exit(0)
 
-        # handle redirection
-        redirection_anchor = 'Location:'
-        redirection = response[response.index(redirection_anchor) + len(redirection_anchor):]
-        redirection = redirection[:redirection.index('\r\n')]
+        redirection = self.getsSubString(response, prefix='Location:', suffix='\r\n')
         self.log.add(redirection)
         self.frontier.add(redirection)
 
     def crawl(self):
         curr_url = self.frontier.pop()
         response = self.sendGetRequest(curr_url)
+        # print(response)
         status = self.getStatus(response)
         if status == CODE_INTERNALERR:
             self.frontier.add(curr_url)
@@ -136,8 +137,7 @@ class Crawler:
                     url_lines.append(line)
             # flag finding section
             for flag_line in flag_lines:
-                flag_anchor = 'FLAG: '
-                flag = flag_line[flag_line.index(flag_anchor) + len(flag_anchor):][:FLAG_LEN]
+                flag = self.getsSubString(flag_line, prefix='FLAG: ', leng=FLAG_LEN)
                 self.flags.add(flag)
             
             if len(self.flags) == 5:
@@ -145,12 +145,12 @@ class Crawler:
 
             # adding new urls section
             for url_line in url_lines:
-                url_anchor = '<a href="'
-                url = url_line[url_line.index(url_anchor) + len(url_anchor):]
-                url = url[:url.index('">')]
+                url = self.getsSubString(url_line, prefix='<a href="', suffix='">')
+                print(url)
                 if url not in self.log:
                     self.frontier.add(url)
                     self.log.add(url)
+                    print(url)
 
         else:
             raise Exception("Invalid status from the response!")
