@@ -54,11 +54,9 @@ class Crawler:
             raise Exception("No end tag defined!")
         prefix_trunc = string[string.index(prefix) + len(prefix):]
         if suffix:
-            print(prefix_trunc)
             return prefix_trunc[:prefix_trunc.index(suffix)]
         if leng:
             return prefix_trunc[:leng]
-
         
     def getSessionInfo(self, response):
         session_id = self.getsSubString(response, prefix="sessionid=", leng=COOKIE_LEN)
@@ -118,7 +116,6 @@ class Crawler:
     def crawl(self):
         curr_url = self.frontier.pop()
         response = self.sendGetRequest(curr_url)
-        # print(response)
         status = self.getStatus(response)
         if status == CODE_INTERNALERR:
             self.frontier.add(curr_url)
@@ -142,15 +139,12 @@ class Crawler:
             
             if len(self.flags) == 5:
                 return
-
             # adding new urls section
             for url_line in url_lines:
                 url = self.getsSubString(url_line, prefix='<a href="', suffix='">')
-                print(url)
                 if url not in self.log:
                     self.frontier.add(url)
                     self.log.add(url)
-                    print(url)
 
         else:
             raise Exception("Invalid status from the response!")
