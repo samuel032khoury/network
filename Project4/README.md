@@ -1,4 +1,3 @@
-# README
 # Project 4 - Reliable Transport Protocol
 
 ## Running the Program

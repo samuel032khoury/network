@@ -1,4 +1,3 @@
-# README
 # Project 5 - Web Crawler
 
 ## Running the Program
