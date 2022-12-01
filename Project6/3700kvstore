@@ -18,7 +18,7 @@ class Replica:
         self.cluster_size = len(others) + 1
 
         self.leader = "FFFF"
-        self.last_communication = now()
+        self.last_communication = 0
         self.election_timeout = np.random.uniform(0.3, 0.6) # high = 2 * low
 
         self.status = FOLLOWER
@@ -98,24 +98,38 @@ class Replica:
                 'prev_log_term': self.log[-1]['term'],
                 'entries': [],
                 'leader_commit': self.commit_index})
+            msg = self.compose_msg("append_req", extra)
+            self.broadcast(msg)
         else:
-            pass
-        msg = self.compose_msg("append_req", extra)
-        self.broadcast(msg)
+            # MODIFY: no broadcast cuz msg are different
+            msg = self.compose_msg("append_req", extra)
+            self.broadcast(msg)
         self.last_communication = now()
 
     def process_msgs(self):
         if not self.recv_buff:return
+
+        failed_rpc = []
+        def buff_failed_rpc():
+            nonlocal failed_rpc
+            self.recv_buff += failed_rpc.copy()
+            failed_rpc = []
         def process_as_follower(msg):
+            # deal with get+put
+            # deal with append_req
+            # follower commit 
+
+            # deal with vote_req
             if msg['type'] == 'vote_req':
                 if msg['term'] < self.current_term:
                     vote_granted = False
                 else:
                     self.current_term = msg['term']
                     self.leader = 'FFFF'
-                    candidate_has_higher_log_term = msg['last_log_term'] >= self.log[-1]['term']
+                    self.last_communication = now()
+                    candidate_has_good_log_term = msg['last_log_term'] >= self.log[-1]['term']
                     candidate_has_longer_log = msg['last_log_index'] >= len(self.log) - 1
-                    candidate_is_utd = candidate_has_higher_log_term and candidate_has_longer_log
+                    candidate_is_utd = candidate_has_good_log_term and candidate_has_longer_log
                     vote_granted = (self.current_term not in self.voted_for or
                      self.voted_for[self.current_term] == msg['candidate_id']) and candidate_is_utd
                     if vote_granted:
@@ -123,34 +137,79 @@ class Replica:
                 res = self.compose_msg("vote_res", {'term': self.current_term, 'vote_granted': vote_granted})
                 res['dst'] = msg['src']
                 self.send(res)
+            
 
         def process_as_candidate(msg):
+            def revert_to_follower():
+                self.status = FOLLOWER
+                self.current_term = msg['term']
+                self.vote_from = set()
+                self.leader = msg['leader']
+                self.last_communication = now()
+            # deal with vote_res
             if msg['type'] == 'vote_res':
+                #deal with rejection
+                if msg['term'] > self.current_term:
+                    revert_to_follower()
+                    buff_failed_rpc()
+
+                #deal with addmission
                 if msg['term'] == self.current_term and msg['vote_granted'] == True:
-                    print("============" * 8)
                     self.vote_from.add(msg['src'])
                     if(len(self.vote_from) > (self.cluster_size / 2.0)):
                         self.status = LEADER
                         self.leader = self.rid
+                        self.last_communication = 0
                         for rid in self.others:
                             self.next_index[rid] = len(self.log)
                             self.match_index[rid] = 0
                         self.issue_append_entries(init = True)
+            # deal with vote_req
+            elif msg['type'] == 'vote_req':
+                if msg['term'] > self.current_term:
+                    revert_to_follower()
+                    failed_rpc.append(msg)
+                    buff_failed_rpc()
+                else:
+                    extra = {'term': self.current_term, 'vote_granted': False}
+                    res = compose_msg('vote_res', extra)
+                    res['dst'] = msg['src']
+                    self.send(res)
+            # deal with append_req
+            # deal with append_res
+            # deal with get+put
                         
 
 
         def process_as_leader(msg):
             pass
+            # leader get + put (implement mutex later)
+            if msg['type'] =='get':
+                pass
+            if msg['type'] =='put':
+                new_entry = {
+                'client': msg['src'], 
+                'forMID': msg['MID'], 
+                'key': msg['key'], 
+                'value': msg['value'], 
+                'term': self.current_term
+                }
+                self.log.append(new_entry)
+            # deal with append_req
+            # deal with append_res
+            # leader commit 
+            # deal with vote_req
+            # deal with vote_res
+
         process_as = {
             FOLLOWER: process_as_follower,
             CANDIDATE: process_as_candidate,
             LEADER: process_as_leader
         }
-        ### integrate failed while stable
-        failed = []
-        for msg in self.recv_buff:
+        while len(self.recv_buff) > 0:
+            msg = self.recv_buff.pop(0)
             process_as[self.status](msg)
-        self.recv_buff = failed.copy()
+        buff_failed_rpc()
 
 
     def run(self):
