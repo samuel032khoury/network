@@ -54,20 +54,27 @@ class Replica:
         }
         return msg
 
-    def send(self, msg):
-        self.socket.sendto(json.dumps(msg).encode('utf-8'), ('localhost', self.port))
+    # send a message to the socket
+    def send(self, msg, dst = None):
+        # overwrite the dst of message if it's provided
+        if dst:
+            msg['dst'] = dst
+        # check dst info exists
+        if 'dst' in msg:
+            self.socket.sendto(json.dumps(msg).encode('utf-8'), ('localhost', self.port))
+        else:
+            raise Exception("ERROR: No dst information!")
 
     def broadcast(self, msg):
         for rid in self.others:
-            msg['dst'] = rid
-            self.send(msg)
+            self.send(msg, rid)
 
     def start_election(self):
         self.current_term += 1
         self.status = CANDIDATE
         self.leader = 'FFFF'
         if self.current_term in self.voted_for:
-            raise Exception("A replica only has one vote for each term!")
+            raise Exception("ERROR: A replica only has one vote for each term!")
         self.voted_for[self.current_term] = self.rid
         self.vote_from = {self.rid} # reset the vote result everytime a new election takes place
         self.last_communication = now()
@@ -105,9 +112,8 @@ class Replica:
                     'leader_commit': self.commit_index,
                     'entries': entries if len(entries) <= 10 else entries[0:10]
                 }
-                msg = self.compose_msg('append_req', extra)
-                msg['dst'] = rid
-                self.send(msg)
+                msg = self.compose_msg('append_req', extra) 
+                self.send(msg, rid)
         self.last_communication = now()
 
     def process_msgs(self):
@@ -128,8 +134,7 @@ class Replica:
                     failed_rpc.append(msg)
                 else:
                     res = self.compose_msg('redirect', {'MID': msg['MID']})
-                    res['dst'] = msg['src']
-                    self.send(res)
+                    self.send(res, msg['src'])
             
             # deal with append_req
             elif msg['type'] == "append_req":
@@ -137,8 +142,7 @@ class Replica:
                 if msg['term'] < self.current_term or msg['prev_log_index'] >= len(self.log) or msg['prev_log_term'] != self.log[msg['prev_log_index']]['term']:
                     extra = {'term': self.current_term, 'success': False, 'next_index': self.commit_index}
                     res = self.compose_msg('append_res', extra)
-                    res['dst'] = msg['src']
-                    self.send(res)
+                    self.send(res, msg['src'])
                 else:
                     self.leader = msg['leader']
                     self.current_term = msg['term']
@@ -153,8 +157,7 @@ class Replica:
                             self.last_applied += 1
                     extra = {'term': self.current_term, 'success': True, 'next_index': len(self.log)}
                     res = self.compose_msg('append_res', extra)
-                    res['dst'] = msg['src']
-                    self.send(res)
+                    self.send(res, msg['src'])
 
             # deal with vote_req
             elif msg['type'] == "vote_req":
@@ -172,26 +175,25 @@ class Replica:
                     if vote_granted:
                         self.voted_for[self.current_term] = msg['candidate_id']
                 res = self.compose_msg("vote_res", {'term': self.current_term, 'vote_granted': vote_granted})
-                res['dst'] = msg['src']
-                self.send(res)       
+                self.send(res, msg['src'])       
 
         # process a message as a candidate
         def process_as_candidate(msg):
             nonlocal failed_rpc
 
-            def revert_to_follower():
+            def revert_to_follower_from_candidate():
                 self.status = FOLLOWER
                 self.current_term = msg['term']
                 self.vote_from = set()
                 self.leader = msg['leader']
                 self.last_communication = now()
+                reload_failed_rpc()
 
             # deal with vote_res
             if msg['type'] == "vote_res":
                 #deal with rejection
                 if msg['term'] > self.current_term:
-                    revert_to_follower()
-                    reload_failed_rpc()
+                    revert_to_follower_from_candidate()
 
                 #deal with addmission
                 if msg['term'] == self.current_term and msg['vote_granted'] == True:
@@ -208,50 +210,45 @@ class Replica:
             # deal with vote_req
             elif msg['type'] == "vote_req":
                 if msg['term'] > self.current_term:
-                    revert_to_follower()
                     failed_rpc.append(msg)
-                    reload_failed_rpc()
+                    revert_to_follower_from_candidate()
                 else:
                     extra = {'term': self.current_term, 'vote_granted': False}
                     res = self.compose_msg('vote_res', extra)
-                    res['dst'] = msg['src']
-                    self.send(res)
+                    self.send(res, msg['src'])
             # deal with append_req
             elif msg['type'] == "append_req":
                 if msg['term'] >= self.current_term:
-                    revert_to_follower()
                     failed_rpc.append(msg)
-                    reload_failed_rpc()
+                    revert_to_follower_from_candidate()
                 else:
                     extra = {'term': self.current_term, 'success': False}
                     res = self.compose_msg('append_res', extra)
-                    res['dst'] = msg['src']
-                    self.send(res)
+                    self.send(res, msg['src'])
             # deal with append_res
             elif msg['type'] == "append_res":
                 if msg['term'] >= self.current_term:
-                    revert_to_follower()
-                    reload_failed_rpc()
+                    revert_to_follower_from_candidate()
             # deal with get+put
             elif msg['type'] in ["get", "put"]:
                 failed_rpc.append(msg)
                         
         # process a message as a leader
         def process_as_leader(msg):
-            def revert_to_follower():
+            def revert_to_follower_from_leader():
                 self.status = FOLLOWER
                 self.current_term = msg['term']
                 self.leader = msg['leader']
                 self.next_index.clear()
                 self.match_index.clear()
                 self.last_communication = now()
+                reload_failed_rpc()
             # leader get + put (implement mutex later)
             if msg['type'] =='get':
                 value = self.data.get(msg['key'], "")
                 extra = {'value': value, 'key': msg['key'], 'MID': msg['MID']}
                 res = self.compose_msg('ok', extra)
-                res['dst'] = msg['src']
-                self.send(res)
+                self.send(res, msg['src'])
             elif msg['type'] =='put':
                 new_entry = {
                     'src': msg['src'], 
@@ -264,19 +261,16 @@ class Replica:
             # deal with append_req
             elif msg['type'] == 'append_req':
                 if msg['term'] >= self.current_term:
-                    revert_to_follower()
                     failed_rpc.append(msg)
-                    reload_failed_rpc()
+                    revert_to_follower_from_leader()
                 else:
                     extra = {'term': current_term, 'success': False}
                     res = self.compose_msg('append_res', extra)
-                    res['dst'] = msg['src']
-                    self.send(res)
+                    self.send(res, msg['src'])
             # deal with append_res
             elif msg['type'] == 'append_res':
                 if msg['term'] > self.current_term:
-                    revert_to_follower()
-                    reload_failed_rpc()
+                    revert_to_follower_from_leader()
                 elif msg['success'] == False:
                     self.next_index[msg['src']] = msg['next_index']
                 else:
@@ -296,26 +290,22 @@ class Replica:
                 while self.last_applied < self.commit_index:
                     self.data[self.log[self.last_applied]['key']] = self.log[self.last_applied]['value']
                     res = self.compose_msg("ok", {'MID': self.log[self.last_applied]['MID']})
-                    res['dst'] = self.log[self.last_applied]['src']
-                    self.send(res)
+                    self.send(res, self.log[self.last_applied]['src'])
                     self.last_applied += 1
 
             # deal with vote_req
             elif msg['type'] == 'vote_req':
                 if msg['term'] > self.current_term:
-                    revert_to_follower()
                     failed_rpc.append(msg)
-                    reload_failed_rpc()
+                    revert_to_follower_from_leader()
                 else:
                     extra = {'term': current_term, 'success': False}
                     res = self.compose_msg('append_res', extra)
-                    res['dst'] = msg['src']
-                    self.send(res)
+                    self.send(res, msg['src'])
             # deal with vote_res
             elif msg['type'] == 'vote_res':
                 if msg['term'] > self.current_term:
-                    revert_to_follower()
-                    reload_failed_rpc()
+                    revert_to_follower_from_leader()
 
         process_as = {
             FOLLOWER: process_as_follower,
