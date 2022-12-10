@@ -115,6 +115,7 @@ class Replica:
             self.recv_buff = failed_rpc + self.recv_buff
             failed_rpc = []
         
+        ## COMMENTS TODO
         # process a message as a follower
         def process_as_follower(msg):
             nonlocal failed_rpc
@@ -241,6 +242,7 @@ class Replica:
             elif msg['type'] in ["get", "put"]:
                 failed_rpc.append(msg) # buffer to the failed RPC and deal with later
                         
+        ## COMMENTS TODO
         # process a message as a leader
         def process_as_leader(msg):
             def revert_to_follower_from_leader():
