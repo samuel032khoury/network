@@ -25,13 +25,13 @@ $ ./run all
 
 ## High-level Approach
 
-Our datastore follows the RAFT consensus protocol to accept put()s from clients and retrieve the corresponding data when a get() is issued. To ensure that data is not lost when a process crashes, we replicate all data from clients and ensure consistency (clients always receive correct answers to get() requests) and high-availability (clients execute put() and get() requests at any time with low latency) using RAFT.
+Our datastore follows the RAFT consensus protocol to accept put()s from clients and retrieve the corresponding data when a get() is issued. To ensure that data is not lost when a process crashes, we replicate all data from clients and ensure consistency (clients always receive correct answers to get() requests) and high availability (clients execute put() and get() requests at any time with low latency) using RAFT.
 
-We followed the RAFT paper to create our program modularly. First, we added support for responding to client get() and put() requests, and then implemented the RAFT election protocol with the different types (FOLLOWER, CANDIDATE, LEADER) of servers. We added a heartbeat to detect leader failures and begin the new election process, and added the ability to send empty AppendEntries RPC to act as a keep-alive message from the leader.
+We followed the RAFT paper to create our program modularly. First, we added support for responding to client get() and put() requests and then implemented the RAFT election protocol with the different types (FOLLOWER, CANDIDATE, LEADER) of servers. We added a heartbeat to detect leader failures and begin the new election process and added the ability to send empty AppendEntries RPC to act as a keep-alive message from the leader.
 
-Then, we created a transaction log and a dictionary containing key/value pairs from clients and ensured that a leader answers get() and put() requests as expected, and added support for AppendEntries RPC calls to send data to replicas and commit only when a quorum is in agreement. If there are failed/dropped commits or leader failures on a lossy network, these commits are retried. Support for additional restrictions from sections 5.4.1 and 5.4.2 of the RAFT paper were also added, and the AppendEntries RPC call was modfifed to implement batching.
+Then, we created a transaction log and a dictionary containing key/value pairs from clients and ensured that a leader answers get() and put() requests as expected, and added support for AppendEntries RPC calls to send data to replicas and commit only when a quorum is in agreement. If there are failed/dropped commits or leader failures on a lossy network, these commits are retried. Supports for additional restrictions from sections 5.4.1 and 5.4.2 of the RAFT paper were also added, and the AppendEntries RPC call was modified to implement batching.
 
-Following the RAFT paper proved to be helpful in designing our program section by section, and the paper served as a guide in implementing the RAFT protocol for our datastore.
+Following the RAFT paper proved to be helpful in designing our program section by section, and the paper served as a guide in implementing the RAFT protocol for our data store.
 
 
 ## Challenges
